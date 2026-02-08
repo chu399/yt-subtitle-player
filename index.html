@@ -1,353 +1,378 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Book, ChevronLeft, ChevronRight, Settings, List, Moon, Sun, Upload, X, Type } from 'lucide-react';
-
-// 這是主應用程式元件
-export default function App() {
-  const [isReady, setIsReady] = useState(false);
-  const [book, setBook] = useState(null);
-  const [rendition, setRendition] = useState(null);
-  const [toc, setToc] = useState([]);
-  const [currentCfi, setCurrentCfi] = useState(null);
-  const [showToc, setShowToc] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [fontSize, setFontSize] = useState(100);
-  const [theme, setTheme] = useState('light');
-  const [fileName, setFileName] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-
-  const viewerRef = useRef(null);
-
-  // 初始化載入必要的 Script (JSZip 和 epub.js)
-  useEffect(() => {
-    const loadScripts = async () => {
-      if (window.ePub) {
-        setIsReady(true);
-        return;
-      }
-
-      const loadScript = (src) => {
-        return new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = src;
-          script.async = true;
-          script.onload = resolve;
-          script.onerror = reject;
-          document.body.appendChild(script);
-        });
-      };
-
-      try {
-        // JSZip 是 epub.js 的相依套件
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
-        // 載入 epub.js
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js');
-        setIsReady(true);
-      } catch (error) {
-        console.error("無法載入 epub.js 函式庫", error);
-      }
-    };
-
-    loadScripts();
-  }, []);
-
-  // 處理檔案上傳
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file || !window.ePub) return;
-
-    setIsLoading(true);
-    setFileName(file.name);
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的 EPUB 閱讀器</title>
     
-    // 如果之前有書，先銷毀
-    if (book) {
-      book.destroy();
-    }
+    <!-- 1. 載入 Tailwind CSS (樣式庫) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. 載入 JSZip (ePub.js 的必要依賴) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    
+    <!-- 3. 載入 ePub.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js"></script>
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const bookData = e.target.result;
-      const newBook = window.ePub(bookData);
-      
-      setBook(newBook);
+    <!-- 4. 載入圖標庫 (Lucide) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-      // 設定渲染區域
-      const newRendition = newBook.renderTo(viewerRef.current, {
-        width: "100%",
-        height: "100%",
-        flow: "paginated",
-        manager: "default",
-      });
-
-      setRendition(newRendition);
-
-      // 載入書籍
-      newRendition.display().then(() => {
-        setIsLoading(false);
-        // 嘗試讀取上次進度
-        const savedCfi = localStorage.getItem(`epub-progress-${file.name}`);
-        if (savedCfi) {
-          newRendition.display(savedCfi);
+    <style>
+        /* 自定義捲軸樣式 */
+        ::-webkit-scrollbar {
+            width: 8px;
         }
-      });
-
-      // 取得目錄
-      newBook.loaded.navigation.then((nav) => {
-        setToc(nav.toc);
-      });
-
-      // 監聽位置變化以儲存進度
-      newRendition.on('relocated', (location) => {
-        setCurrentCfi(location.start.cfi);
-        localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi);
-      });
-
-      // 應用初始設定
-      applyTheme(newRendition, theme);
-      newRendition.themes.fontSize(`${fontSize}%`);
-    };
-
-    reader.readAsArrayBuffer(file);
-  };
-
-  // 翻頁邏輯
-  const prevPage = () => rendition && rendition.prev();
-  const nextPage = () => rendition && rendition.next();
-
-  // 鍵盤控制
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (!rendition) return;
-      if (e.key === "ArrowLeft") prevPage();
-      if (e.key === "ArrowRight") nextPage();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [rendition]);
-
-  // 跳轉章節
-  const navigateToChapter = (href) => {
-    if (rendition) {
-      rendition.display(href);
-      setShowToc(false);
-    }
-  };
-
-  // 調整字體
-  const changeFontSize = (delta) => {
-    const newSize = Math.max(50, Math.min(200, fontSize + delta));
-    setFontSize(newSize);
-    if (rendition) {
-      rendition.themes.fontSize(`${newSize}%`);
-    }
-  };
-
-  // 切換主題
-  const toggleTheme = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(newTheme);
-    if (rendition) {
-      applyTheme(rendition, newTheme);
-    }
-  };
-
-  const applyTheme = (rend, themeName) => {
-    if (themeName === 'dark') {
-      rend.themes.register('dark', {
-        body: { color: '#e2e8f0', background: '#1e293b' },
-        p: { color: '#e2e8f0' },
-        h1: { color: '#f8fafc' },
-        h2: { color: '#f8fafc' },
-        h3: { color: '#f8fafc' },
-        h4: { color: '#f8fafc' },
-        span: { color: '#e2e8f0' }
-      });
-      rend.themes.select('dark');
-    } else {
-      rend.themes.register('light', {
-        body: { color: '#000000', background: '#ffffff' }
-      });
-      rend.themes.select('light');
-    }
-  };
-
-  // 主容器樣式
-  const containerClass = `h-screen w-full flex flex-col ${theme === 'dark' ? 'bg-slate-900 text-slate-200' : 'bg-gray-50 text-gray-800'}`;
-
-  return (
-    <div className={containerClass}>
-      {/* 頂部導航列 */}
-      <header className={`flex items-center justify-between p-4 shadow-sm z-20 ${theme === 'dark' ? 'bg-slate-800 border-b border-slate-700' : 'bg-white border-b border-gray-200'}`}>
-        <div className="flex items-center gap-3">
-          <Book className="w-6 h-6 text-blue-500" />
-          <h1 className="text-lg font-bold hidden sm:block">
-            {fileName ? fileName : "網頁版 EPUB 閱讀器"}
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {!fileName && (
-            <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
-              <Upload className="w-4 h-4" />
-              <span>開啟書籍</span>
-              <input 
-                type="file" 
-                accept=".epub" 
-                onChange={handleFileUpload} 
-                className="hidden" 
-                disabled={!isReady}
-              />
-            </label>
-          )}
-
-          {fileName && (
-            <>
-              <button onClick={() => setShowSettings(!showSettings)} className="p-2 rounded-full hover:bg-black/10 transition">
-                <Settings className="w-5 h-5" />
-              </button>
-              <button onClick={() => setShowToc(!showToc)} className="p-2 rounded-full hover:bg-black/10 transition">
-                <List className="w-5 h-5" />
-              </button>
-            </>
-          )}
-        </div>
-      </header>
-
-      {/* 設定選單 (浮動) */}
-      {showSettings && (
-        <div className={`absolute top-16 right-4 z-30 p-4 rounded-lg shadow-xl border w-64 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold">閱讀設定</h3>
-            <button onClick={() => setShowSettings(false)}><X className="w-4 h-4" /></button>
-          </div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm flex items-center gap-2"><Sun className="w-4 h-4"/> 主題</span>
-              <button 
-                onClick={toggleTheme}
-                className={`w-12 h-6 rounded-full p-1 transition-colors ${theme === 'dark' ? 'bg-blue-600' : 'bg-gray-300'}`}
-              >
-                <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${theme === 'dark' ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
-
-            <div className="border-t border-gray-600/20 my-2"></div>
-
-            <div>
-              <span className="text-sm flex items-center gap-2 mb-2"><Type className="w-4 h-4"/> 字體大小 ({fontSize}%)</span>
-              <div className="flex items-center gap-2">
-                <button onClick={() => changeFontSize(-10)} className="bg-black/10 hover:bg-black/20 px-3 py-1 rounded text-sm">-</button>
-                <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500" style={{width: `${(fontSize - 50) / 1.5}%`}}></div>
-                </div>
-                <button onClick={() => changeFontSize(10)} className="bg-black/10 hover:bg-black/20 px-3 py-1 rounded text-sm">+</button>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <label className="w-full text-center block cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 py-2 rounded-lg text-sm transition-colors">
-                開啟另一本書
-                <input type="file" accept=".epub" onChange={handleFileUpload} className="hidden" />
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 目錄側邊欄 */}
-      {showToc && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setShowToc(false)}></div>
-          <div className={`relative w-80 max-w-[80%] h-full shadow-2xl overflow-y-auto ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
-            <div className="p-4 border-b border-gray-600/20 flex justify-between items-center">
-              <h2 className="font-bold text-lg">目錄</h2>
-              <button onClick={() => setShowToc(false)}><X className="w-5 h-5" /></button>
-            </div>
-            <ul className="p-2">
-              {toc.length === 0 ? (
-                <li className="p-4 text-center opacity-50">無目錄資訊</li>
-              ) : (
-                toc.map((chapter, index) => (
-                  <li key={index}>
-                    <button 
-                      onClick={() => navigateToChapter(chapter.href)}
-                      className={`w-full text-left p-3 rounded-lg text-sm transition-colors ${theme === 'dark' ? 'hover:bg-slate-700' : 'hover:bg-gray-100'}`}
-                    >
-                      {chapter.label}
-                    </button>
-                  </li>
-                ))
-              )}
-            </ul>
-          </div>
-        </div>
-      )}
-
-      {/* 主要內容區 */}
-      <main className="flex-1 relative overflow-hidden flex flex-col justify-center items-center">
-        {!isReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 text-white">
-            <p>正在初始化閱讀器引擎...</p>
-          </div>
-        )}
-
-        {!fileName && isReady && (
-          <div className="text-center p-8 max-w-md animate-fade-in">
-            <div className="bg-blue-100 dark:bg-blue-900/30 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Book className="w-10 h-10 text-blue-500" />
-            </div>
-            <h2 className="text-2xl font-bold mb-2">歡迎使用 EPUB 閱讀器</h2>
-            <p className="opacity-70 mb-6">這是一個完全在瀏覽器執行的閱讀器。請上傳你的 .epub 檔案開始閱讀。</p>
-            <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl inline-flex items-center gap-2 transition-transform hover:scale-105 shadow-lg shadow-blue-500/20">
-              <Upload className="w-5 h-5" />
-              <span>選擇 EPUB 檔案</span>
-              <input 
-                type="file" 
-                accept=".epub" 
-                onChange={handleFileUpload} 
-                className="hidden" 
-              />
-            </label>
-          </div>
-        )}
-
-        {isLoading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm">
-            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p>正在載入書籍...</p>
-          </div>
-        )}
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #475569;
+        }
         
-        {/* EPUB 容器 */}
-        <div ref={viewerRef} className={`w-full h-full ${!fileName ? 'hidden' : ''} shadow-inner`} />
-      </main>
+        /* 隱藏預設的 input file */
+        input[type="file"] {
+            display: none;
+        }
 
-      {/* 底部導航按鈕 (僅在有書時顯示) */}
-      {fileName && (
-        <footer className={`h-14 flex items-center justify-between px-4 sm:px-8 border-t ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
-          <button 
-            onClick={prevPage} 
-            className="p-2 rounded-lg hover:bg-black/10 flex items-center gap-1 disabled:opacity-50"
-          >
-            <ChevronLeft className="w-5 h-5" />
-            <span className="hidden sm:inline">上一頁</span>
-          </button>
-          
-          <div className="text-xs opacity-50 truncate max-w-[150px] text-center">
-            {fileName}
-          </div>
+        #viewer {
+            height: calc(100vh - 120px); /* 扣除 header 和 footer */
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 transition-colors duration-300 h-screen flex flex-col overflow-hidden" id="app-body">
 
-          <button 
-            onClick={nextPage} 
-            className="p-2 rounded-lg hover:bg-black/10 flex items-center gap-1 disabled:opacity-50"
-          >
-            <span className="hidden sm:inline">下一頁</span>
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </footer>
-      )}
+    <!-- 頂部導航列 -->
+    <header class="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm transition-colors duration-300 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-100">
+        <div class="flex items-center gap-3">
+            <i data-lucide="book-open" class="text-blue-500 w-6 h-6"></i>
+            <h1 class="text-lg font-bold hidden sm:block" id="book-title">網頁版閱讀器</h1>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- 未載入書籍時顯示 -->
+            <label id="upload-btn" class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span>開啟書籍</span>
+                <input type="file" id="file-input" accept=".epub">
+            </label>
+
+            <!-- 載入後顯示 -->
+            <div id="controls" class="hidden flex items-center gap-2">
+                <button onclick="toggleToc()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition" title="目錄">
+                    <i data-lucide="list" class="w-5 h-5"></i>
+                </button>
+                <button onclick="toggleSettings()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition" title="設定">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 設定面板 (浮動) -->
+    <div id="settings-panel" class="hidden absolute top-16 right-4 z-50 p-4 rounded-xl shadow-2xl border w-64 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold">閱讀設定</h3>
+            <button onclick="toggleSettings()"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        
+        <div class="space-y-4">
+            <!-- 主題切換 -->
+            <div class="flex items-center justify-between">
+                <span class="text-sm flex items-center gap-2"><i data-lucide="sun" class="w-4 h-4"></i> 深色模式</span>
+                <button id="theme-toggle" onclick="toggleTheme()" class="w-12 h-6 rounded-full p-1 transition-colors bg-gray-300 dark:bg-blue-600 flex items-center">
+                    <div class="w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform duration-300 translate-x-0 dark:translate-x-6"></div>
+                </button>
+            </div>
+
+            <hr class="border-gray-200 dark:border-slate-600">
+
+            <!-- 字體大小 -->
+            <div>
+                <span class="text-sm flex items-center gap-2 mb-2"><i data-lucide="type" class="w-4 h-4"></i> 字體大小</span>
+                <div class="flex items-center gap-2">
+                    <button onclick="changeFontSize(-10)" class="bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 px-3 py-1 rounded text-lg font-bold">-</button>
+                    <span id="font-size-display" class="flex-1 text-center text-sm">100%</span>
+                    <button onclick="changeFontSize(10)" class="bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 px-3 py-1 rounded text-lg font-bold">+</button>
+                </div>
+            </div>
+
+            <!-- 開啟新書 -->
+            <div class="pt-2">
+                <label class="w-full text-center block cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-slate-700 dark:text-gray-200 dark:hover:bg-slate-600 py-2 rounded-lg text-sm transition-colors border border-transparent">
+                    開啟另一本書
+                    <input type="file" onchange="handleFile(this.files[0])" accept=".epub" class="hidden">
+                </label>
+            </div>
+        </div>
     </div>
-  );
-}
+
+    <!-- 目錄面板 (側滑) -->
+    <div id="toc-overlay" class="hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity" onclick="toggleToc()"></div>
+    <div id="toc-panel" class="fixed top-0 left-0 bottom-0 w-80 max-w-[85%] z-50 bg-white dark:bg-slate-800 shadow-2xl transform -translate-x-full transition-transform duration-300 flex flex-col">
+        <div class="p-4 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center bg-gray-50 dark:bg-slate-900">
+            <h2 class="font-bold text-lg dark:text-white">目錄</h2>
+            <button onclick="toggleToc()" class="p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><i data-lucide="x" class="w-5 h-5 dark:text-white"></i></button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2" id="toc-list">
+            <!-- 目錄項目會動態產生在這裡 -->
+            <p class="text-center text-gray-500 mt-10">尚無目錄資訊</p>
+        </div>
+    </div>
+
+    <!-- 主要閱讀區 -->
+    <main class="flex-1 relative flex flex-col justify-center items-center bg-gray-50 dark:bg-slate-900 overflow-hidden">
+        
+        <!-- 歡迎畫面 -->
+        <div id="welcome-screen" class="text-center p-8 max-w-md animate-fade-in">
+            <div class="bg-blue-100 dark:bg-blue-900/30 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
+                <i data-lucide="book" class="w-12 h-12 text-blue-500"></i>
+            </div>
+            <h2 class="text-2xl font-bold mb-3 dark:text-white">歡迎使用 EPUB 閱讀器</h2>
+            <p class="text-gray-500 dark:text-gray-400 mb-8">支援本機離線閱讀、自動記憶進度、深色模式。</p>
+            <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl inline-flex items-center gap-2 transition-transform hover:scale-105 shadow-lg shadow-blue-500/30">
+                <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+                <span>選擇 EPUB 檔案</span>
+                <input type="file" onchange="handleFile(this.files[0])" accept=".epub" class="hidden">
+            </label>
+        </div>
+
+        <!-- 載入中動畫 -->
+        <div id="loading-spinner" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
+            <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p class="text-blue-600 dark:text-blue-400 font-medium animate-pulse">正在解析書籍...</p>
+        </div>
+        
+        <!-- EPUB 容器 -->
+        <div id="viewer" class="hidden w-full h-full max-w-4xl mx-auto bg-white dark:bg-slate-900 shadow-xl"></div>
+    </main>
+
+    <!-- 底部翻頁區 -->
+    <footer id="footer-nav" class="hidden h-14 flex items-center justify-between px-4 sm:px-8 border-t border-gray-200 bg-white dark:bg-slate-800 dark:border-slate-700 transition-colors">
+        <button onclick="prevPage()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1 text-gray-700 dark:text-gray-200">
+            <i data-lucide="chevron-left" class="w-5 h-5"></i>
+            <span class="hidden sm:inline">上一頁</span>
+        </button>
+        
+        <div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[150px] text-center" id="footer-info">
+            <!-- 進度百分比或章節名 -->
+        </div>
+
+        <button onclick="nextPage()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1 text-gray-700 dark:text-gray-200">
+            <span class="hidden sm:inline">下一頁</span>
+            <i data-lucide="chevron-right" class="w-5 h-5"></i>
+        </button>
+    </footer>
+
+    <script>
+        // 初始化 Lucide 圖標
+        lucide.createIcons();
+
+        // 變數宣告
+        let book = null;
+        let rendition = null;
+        let currentFontSize = 100;
+        let isDarkMode = false;
+        let currentFileName = "";
+
+        // DOM 元素
+        const fileInput = document.getElementById('file-input');
+        const welcomeScreen = document.getElementById('welcome-screen');
+        const viewer = document.getElementById('viewer');
+        const controls = document.getElementById('controls');
+        const footerNav = document.getElementById('footer-nav');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const bookTitle = document.getElementById('book-title');
+        const settingsPanel = document.getElementById('settings-panel');
+        const tocPanel = document.getElementById('toc-panel');
+        const tocOverlay = document.getElementById('toc-overlay');
+        const tocList = document.getElementById('toc-list');
+        const appBody = document.getElementById('app-body');
+
+        // 監聽主要檔案輸入
+        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        // 鍵盤控制
+        document.addEventListener('keyup', (e) => {
+            if (!rendition) return;
+            if (e.key === "ArrowLeft") prevPage();
+            if (e.key === "ArrowRight") nextPage();
+        });
+
+        // 處理檔案載入
+        function handleFile(file) {
+            if (!file) return;
+            
+            // 檢查 ePub 是否已載入
+            if (typeof window.ePub === 'undefined') {
+                alert("閱讀器引擎尚未載入完成，請檢查網路連線後重新整理頁面。");
+                return;
+            }
+
+            // 顯示載入中
+            loadingSpinner.classList.remove('hidden');
+            welcomeScreen.classList.add('hidden');
+            
+            currentFileName = file.name;
+            bookTitle.textContent = file.name;
+
+            // 如果有舊書，先銷毀
+            if (book) {
+                book.destroy();
+                document.getElementById('viewer').innerHTML = '';
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const bookData = e.target.result;
+                
+                // 初始化書籍
+                book = ePub(bookData);
+                
+                // 渲染設定
+                rendition = book.renderTo("viewer", {
+                    width: "100%",
+                    height: "100%",
+                    flow: "paginated",
+                    manager: "default"
+                });
+
+                // 顯示書籍
+                const savedCfi = localStorage.getItem(`epub-progress-${file.name}`);
+                rendition.display(savedCfi || undefined).then(() => {
+                    loadingSpinner.classList.add('hidden');
+                    viewer.classList.remove('hidden');
+                    controls.classList.remove('hidden');
+                    footerNav.classList.remove('hidden');
+                    
+                    // 應用當前主題和字體
+                    applyTheme();
+                    rendition.themes.fontSize(`${currentFontSize}%`);
+                });
+
+                // 載入目錄
+                book.loaded.navigation.then((nav) => {
+                    renderToc(nav.toc);
+                });
+
+                // 監聽進度變化
+                rendition.on('relocated', (location) => {
+                    localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi);
+                    // 這裡可以計算百分比，但在流式佈局中有時不準確，暫略
+                });
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+
+        // 翻頁功能
+        function prevPage() { rendition && rendition.prev(); }
+        function nextPage() { rendition && rendition.next(); }
+
+        // 目錄功能
+        function toggleToc() {
+            const isHidden = tocPanel.classList.contains('-translate-x-full');
+            if (isHidden) {
+                tocPanel.classList.remove('-translate-x-full');
+                tocOverlay.classList.remove('hidden');
+            } else {
+                tocPanel.classList.add('-translate-x-full');
+                tocOverlay.classList.add('hidden');
+            }
+        }
+
+        function renderToc(toc) {
+            tocList.innerHTML = '';
+            if (!toc.length) {
+                tocList.innerHTML = '<p class="text-center text-gray-500 mt-4">無目錄</p>';
+                return;
+            }
+            
+            const createList = (items, level = 0) => {
+                const ul = document.createElement('ul');
+                ul.className = level > 0 ? 'ml-4 border-l border-gray-200 dark:border-slate-700 pl-2' : '';
+                
+                items.forEach(chapter => {
+                    const li = document.createElement('li');
+                    li.className = 'mb-1';
+                    
+                    const btn = document.createElement('button');
+                    btn.textContent = chapter.label;
+                    btn.className = `w-full text-left p-2 rounded text-sm hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`;
+                    btn.onclick = () => {
+                        rendition.display(chapter.href);
+                        toggleToc();
+                    };
+                    
+                    li.appendChild(btn);
+                    
+                    if (chapter.subitems && chapter.subitems.length > 0) {
+                        li.appendChild(createList(chapter.subitems, level + 1));
+                    }
+                    
+                    ul.appendChild(li);
+                });
+                return ul;
+            };
+
+            tocList.appendChild(createList(toc));
+        }
+
+        // 設定功能
+        function toggleSettings() {
+            settingsPanel.classList.toggle('hidden');
+        }
+
+        function changeFontSize(amount) {
+            currentFontSize = Math.max(50, Math.min(200, currentFontSize + amount));
+            document.getElementById('font-size-display').textContent = `${currentFontSize}%`;
+            if (rendition) {
+                rendition.themes.fontSize(`${currentFontSize}%`);
+            }
+        }
+
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            const toggleBtn = document.getElementById('theme-toggle').firstElementChild;
+            
+            if (isDarkMode) {
+                document.documentElement.classList.add('dark');
+                toggleBtn.classList.add('translate-x-6');
+            } else {
+                document.documentElement.classList.remove('dark');
+                toggleBtn.classList.remove('translate-x-6');
+            }
+            
+            applyTheme();
+        }
+
+        function applyTheme() {
+            if (!rendition) return;
+            
+            if (isDarkMode) {
+                rendition.themes.register('dark', {
+                    body: { color: '#cbd5e1', background: '#0f172a' },
+                    p: { color: '#cbd5e1' },
+                    h1: { color: '#f1f5f9' },
+                    h2: { color: '#f1f5f9' },
+                    a: { color: '#60a5fa' }
+                });
+                rendition.themes.select('dark');
+            } else {
+                rendition.themes.register('light', {
+                    body: { color: '#000000', background: '#ffffff' }
+                });
+                rendition.themes.select('light');
+            }
+        }
+    </script>
+</body>
+</html>
 
