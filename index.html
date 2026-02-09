@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>EPUB 閱讀器 (iOS修復版)</title>
+    <title>EPUB 閱讀器 (最終修復版)</title>
+    
+    <!-- 1. 樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js"></script>
+
+    <!-- 2. 核心引擎 (更換為 jsdelivr 源，通常更穩) -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 
     <style>
         body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
@@ -16,15 +20,10 @@
         .dark ::-webkit-scrollbar-thumb { background: #475569; }
         #viewer { height: calc(100vh - 120px); width: 100%; overflow: hidden; }
         
-        /* 動畫 */
         @keyframes pulse-green { 0%, 100% { background-color: #22c55e; } 50% { background-color: #4ade80; } }
         .status-dot-ready { animation: pulse-green 2s infinite; }
-        @keyframes wave { 0% { height: 3px; } 50% { height: 12px; } 100% { height: 3px; } }
-        .playing-indicator span { display: inline-block; width: 3px; background-color: #3b82f6; margin-right: 2px; animation: wave 1s infinite ease-in-out; }
-        .playing-indicator span:nth-child(2) { animation-delay: 0.1s; }
-        .playing-indicator span:nth-child(3) { animation-delay: 0.2s; }
         
-        .tab-btn { @apply flex-1 text-[10px] sm:text-xs py-2 rounded-md transition text-gray-500 dark:text-gray-400 whitespace-nowrap border border-transparent; }
+        .tab-btn { @apply flex-1 text-xs py-2 rounded-md transition text-gray-500 dark:text-gray-400 whitespace-nowrap border border-transparent; }
         .tab-btn.active { @apply bg-white dark:bg-slate-600 shadow text-blue-600 font-bold dark:text-blue-300 border-gray-200 dark:border-slate-500; }
     </style>
 </head>
@@ -37,23 +36,22 @@
             <div class="flex flex-col">
                 <h1 class="text-sm font-bold truncate max-w-[120px]" id="book-title">閱讀器</h1>
                 <div class="flex items-center gap-1.5">
-                    <div id="engine-status-dot" class="w-2 h-2 rounded-full bg-yellow-400"></div>
-                    <span id="engine-status-text" class="text-[10px] text-gray-400">初始化...</span>
+                    <div id="engine-status-dot" class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span id="engine-status-text" class="text-[10px] text-gray-400">連線中...</span>
                 </div>
             </div>
         </div>
 
         <div class="flex items-center gap-2">
-            <label id="upload-btn-label" class="bg-blue-600 active:bg-blue-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-sm text-sm transition-transform active:scale-95">
+            <label id="upload-btn-label" class="bg-blue-600 active:bg-blue-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-sm text-sm transition-transform active:scale-95 opacity-50 pointer-events-none">
                 <i data-lucide="upload" class="w-4 h-4"></i>
                 <span class="hidden sm:inline">開啟</span>
-                <input type="file" id="file-input" accept=".epub" class="hidden">
+                <input type="file" id="file-input" accept=".epub" class="hidden" disabled>
             </label>
 
             <div id="controls" class="hidden flex items-center gap-1">
                 <button onclick="toggleTTS()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 relative active:bg-gray-200">
                     <i data-lucide="headphones" class="w-5 h-5"></i>
-                    <div id="tts-active-indicator" class="hidden absolute top-1 right-1 flex items-end h-3 w-3 justify-center playing-indicator"><span></span><span></span><span></span></div>
                 </button>
                 <button onclick="toggleToc()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 active:bg-gray-200"><i data-lucide="list" class="w-5 h-5"></i></button>
                 <button onclick="toggleSettings()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 active:bg-gray-200"><i data-lucide="settings" class="w-5 h-5"></i></button>
@@ -69,7 +67,6 @@
         </div>
 
         <div class="space-y-4">
-            <!-- 播放控制區 -->
             <div class="flex justify-center items-center gap-6 bg-gray-50 dark:bg-slate-900/50 p-4 rounded-xl">
                 <button onclick="stopTTS()" class="p-3 rounded-full bg-gray-200 active:bg-gray-300 dark:bg-slate-700 dark:active:bg-slate-600 transition">
                     <i data-lucide="square" class="w-5 h-5 fill-current text-gray-600 dark:text-gray-200"></i>
@@ -81,51 +78,33 @@
             
             <div class="text-center">
                 <p id="tts-status-msg" class="text-xs font-medium text-blue-600 dark:text-blue-300 min-h-[1.5em]">準備就緒</p>
-                <!-- 除錯日誌顯示開關 -->
-                <button onclick="toggleDebugLog()" class="text-[10px] text-gray-400 underline mt-1">顯示/隱藏系統日誌</button>
+                <div id="debug-area" class="text-[10px] text-red-400 mt-2 hidden"></div>
             </div>
 
-            <!-- 模式切換 -->
             <div class="flex rounded-lg bg-gray-100 dark:bg-slate-700 p-1">
                 <button onclick="switchTTSMode('edge')" id="mode-edge-btn" class="tab-btn active text-blue-600 font-bold bg-white dark:bg-slate-600 shadow">Edge (免費)</button>
-                <button onclick="switchTTSMode('native')" id="mode-native-btn" class="tab-btn">內建語音</button>
+                <button onclick="switchTTSMode('native')" id="mode-native-btn" class="tab-btn">內建</button>
             </div>
 
-            <!-- Edge 設定 -->
             <div id="settings-edge">
                 <div class="grid grid-cols-2 gap-2">
-                    <button onclick="selectEdgeVoice('zh-TW-HsiaoChenNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-blue-500 bg-blue-50 dark:bg-slate-600" data-voice="zh-TW-HsiaoChenNeural">
-                        <span class="font-bold block">曉臻 (女)</span><span class="opacity-70">最自然</span>
-                    </button>
-                    <button onclick="selectEdgeVoice('zh-TW-YunJheNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-gray-200 dark:border-slate-600" data-voice="zh-TW-YunJheNeural">
-                        <span class="font-bold block">雲哲 (男)</span><span class="opacity-70">新聞感</span>
-                    </button>
+                    <button onclick="selectEdgeVoice('zh-TW-HsiaoChenNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-blue-500 bg-blue-50 dark:bg-slate-600" data-voice="zh-TW-HsiaoChenNeural"><span class="font-bold block">曉臻 (女)</span></button>
+                    <button onclick="selectEdgeVoice('zh-TW-YunJheNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-gray-200 dark:border-slate-600" data-voice="zh-TW-YunJheNeural"><span class="font-bold block">雲哲 (男)</span></button>
                 </div>
                 <div class="mt-3">
-                    <label class="text-xs text-gray-500 mb-1 block">語速調整 <span id="edge-rate-val" class="ml-2 text-blue-500">0%</span></label>
-                    <input type="range" id="edge-rate" min="-50" max="50" step="10" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('edge-rate-val').textContent = (this.value > 0 ? '+' : '') + this.value + '%'">
+                    <label class="text-xs text-gray-500 mb-1 block">語速 <span id="edge-rate-val" class="ml-2 text-blue-500">0%</span></label>
+                    <input type="range" id="edge-rate" min="-50" max="50" step="10" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('edge-rate-val').textContent = this.value + '%'">
                 </div>
             </div>
-
-            <!-- Native 設定 -->
-            <div id="settings-native" class="hidden">
-                <select id="voice-select" class="w-full text-sm p-2 rounded border mb-2 dark:bg-slate-700 dark:border-slate-600"></select>
-                <input type="range" id="rate-range" min="0.5" max="2" step="0.1" value="1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none">
-            </div>
-        </div>
-        
-        <!-- 除錯日誌區域 -->
-        <div id="debug-log" class="hidden mt-4 p-2 bg-gray-900 text-green-400 text-[10px] font-mono rounded h-32 overflow-y-auto select-text">
-            <div>> System Initialized...</div>
         </div>
     </div>
 
-    <!-- 其他面板 (設定、目錄) 略為簡化以節省空間 -->
+    <!-- 設定與目錄面板 -->
     <div id="settings-panel" class="hidden absolute top-16 right-4 z-50 p-4 rounded-xl shadow-2xl border w-64 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200">
         <h3 class="font-semibold mb-4">外觀設定</h3>
         <div class="flex items-center justify-between mb-4">
             <span>深色模式</span>
-            <button id="theme-toggle" onclick="toggleTheme()" class="w-12 h-6 rounded-full bg-gray-300 dark:bg-blue-600 flex items-center p-1 transition-colors"><div class="w-4 h-4 rounded-full bg-white transform transition-transform dark:translate-x-6"></div></button>
+            <button onclick="toggleTheme()" class="w-12 h-6 rounded-full bg-gray-300 dark:bg-blue-600 flex items-center p-1"><div class="w-4 h-4 rounded-full bg-white transform transition-transform dark:translate-x-6"></div></button>
         </div>
         <div>
             <span class="mb-2 block">字體大小</span>
@@ -146,7 +125,8 @@
                 <i data-lucide="book" class="w-10 h-10 text-blue-500"></i>
             </div>
             <h2 class="text-xl font-bold mb-3 dark:text-white">EPUB 閱讀器</h2>
-            <p class="text-sm text-gray-500">支援 Edge TTS (iOS 修復版)</p>
+            <p class="text-sm text-gray-500">請等待上方燈號變為 <span class="text-green-500 font-bold">綠色</span></p>
+            <div id="error-msg" class="text-red-500 text-xs mt-4 hidden"></div>
         </div>
         <div id="loading-spinner" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
             <div class="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
@@ -154,64 +134,49 @@
         <div id="viewer" class="hidden w-full h-full bg-white dark:bg-slate-900 shadow-xl"></div>
     </main>
 
-    <!-- 底部 -->
     <footer id="footer-nav" class="hidden h-14 flex items-center justify-between px-4 border-t bg-white dark:bg-slate-800 dark:border-slate-700 pb-safe-bottom">
         <button onclick="prevPage()" class="p-4"><i data-lucide="chevron-left"></i></button>
         <div class="text-xs text-gray-400">點擊翻頁</div>
         <button onclick="nextPage()" class="p-4"><i data-lucide="chevron-right"></i></button>
     </footer>
 
-    <!-- 隱藏的 Audio 標籤 (解決 iOS 播放問題的關鍵) -->
     <audio id="audio-player" playsinline></audio>
 
     <script>
         lucide.createIcons();
         
-        // --- 日誌系統 ---
-        function log(msg, type='info') {
-            const logPanel = document.getElementById('debug-log');
-            const time = new Date().toLocaleTimeString();
-            const color = type === 'error' ? 'text-red-400' : (type === 'success' ? 'text-green-400' : 'text-gray-300');
-            const div = document.createElement('div');
-            div.className = `${color} mb-1 border-b border-gray-800 pb-1`;
-            div.innerHTML = `<span class="opacity-50">[${time}]</span> ${msg}`;
-            logPanel.prepend(div);
-            console.log(`[${type.toUpperCase()}] ${msg}`);
-        }
-        function toggleDebugLog() { document.getElementById('debug-log').classList.toggle('hidden'); }
-
-        // --- 全域變數 ---
         let book = null, rendition = null;
-        let ttsMode = 'edge'; 
-        let edgeVoice = 'zh-TW-HsiaoChenNeural';
-        let isPlaying = false;
-        let audioQueue = [];
-        let textQueue = [];
-        let isFetching = false;
-        
-        // Audio 元素 (不要每次 new Audio，用同一個 element 比較穩)
+        let ttsMode = 'edge', edgeVoice = 'zh-TW-HsiaoChenNeural';
+        let isPlaying = false, audioQueue = [], textQueue = [], isFetching = false;
         const audioPlayer = document.getElementById('audio-player');
-        
-        // 無聲音訊 (用於喚醒 iOS Audio Context)
         const silentWav = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
-        // --- 核心初始化 ---
-        document.addEventListener('DOMContentLoaded', () => {
-            updateStatus('引擎就緒', 'success'); 
-            // 嘗試載入上次設定
-            const savedVoice = localStorage.getItem('edge_voice');
-            if(savedVoice) {
-                edgeVoice = savedVoice;
-                updateVoiceBtnStyle(savedVoice);
-            }
-        });
+        // 強制檢查依賴是否載入
+        window.onload = () => {
+            const checkDeps = setInterval(() => {
+                const hasZip = typeof window.JSZip !== 'undefined';
+                const hasEpub = typeof window.ePub !== 'undefined';
+                
+                if (hasZip && hasEpub) {
+                    clearInterval(checkDeps);
+                    updateStatus('引擎就緒', 'success');
+                    document.getElementById('upload-btn-label').classList.remove('opacity-50', 'pointer-events-none');
+                    document.getElementById('file-input').disabled = false;
+                } else {
+                    // 如果 5 秒還沒好，顯示錯誤
+                    setTimeout(() => {
+                        if(typeof window.JSZip === 'undefined') showError('JSZip 載入失敗，請檢查網路');
+                        if(typeof window.ePub === 'undefined') showError('ePub 引擎載入失敗，請檢查網路');
+                    }, 5000);
+                }
+            }, 500);
+        };
 
         const fileInput = document.getElementById('file-input');
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 
         function handleFile(file) {
             if (!file) return;
-            log(`開啟檔案: ${file.name}`);
             document.getElementById('loading-spinner').classList.remove('hidden');
             document.getElementById('welcome-screen').classList.add('hidden');
             document.getElementById('book-title').textContent = file.name.replace('.epub','');
@@ -221,66 +186,57 @@
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
+                    if (!window.JSZip) throw new Error("JSZip 未載入");
                     book = ePub(e.target.result);
                     rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated", manager: "default" });
+                    
                     rendition.display().then(() => {
                         document.getElementById('loading-spinner').classList.add('hidden');
                         document.getElementById('viewer').classList.remove('hidden');
                         document.getElementById('controls').classList.remove('hidden');
                         document.getElementById('footer-nav').classList.remove('hidden');
                         document.getElementById('upload-btn-label').classList.add('hidden');
-                        // 載入目錄
                         book.loaded.navigation.then(nav => renderToc(nav.toc));
+                    }).catch(err => {
+                        showError('書籍渲染錯誤: ' + err.message);
+                        document.getElementById('loading-spinner').classList.add('hidden');
                     });
                     
                     // 觸控翻頁
                     let ts = 0;
-                    const el = document.getElementById('viewer');
-                    el.addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
-                    el.addEventListener('touchend', e => {
+                    document.getElementById('viewer').addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
+                    document.getElementById('viewer').addEventListener('touchend', e => {
                         let te = e.changedTouches[0].screenX;
                         if (te < ts - 50) nextPage();
                         if (te > ts + 50) prevPage();
                     }, {passive: true});
                 } catch(err) {
-                    log('書籍解析失敗: ' + err.message, 'error');
-                    alert('書籍解析失敗');
+                    showError('解析失敗: ' + err.message);
+                    document.getElementById('loading-spinner').classList.add('hidden');
                 }
             };
             reader.readAsArrayBuffer(file);
         }
 
-        // --- TTS 邏輯 ---
-
         function toggleTTS() {
             document.getElementById('tts-panel').classList.toggle('hidden');
-            // 關閉其他
             document.getElementById('settings-panel').classList.add('hidden');
             document.getElementById('toc-panel').classList.add('-translate-x-full');
             document.getElementById('toc-overlay').classList.add('hidden');
         }
 
-        // 這是解決 iOS「按播放沒反應」的關鍵函數
-        // 在使用者點擊 Play 的瞬間，必須做這些事
         function playOrPauseTTS() {
             if (isPlaying) {
-                // 暫停
-                log('使用者暫停播放');
                 stopTTS(); 
             } else {
-                // 播放
-                log('使用者點擊播放...');
-                
-                // 1. 馬上播放無聲音樂，搶佔 iOS 音訊通道
+                // iOS Audio Unlock Hack
                 audioPlayer.src = silentWav;
                 audioPlayer.play().then(() => {
-                    log('音訊通道已喚醒 (Unlock Audio Context)');
-                    // 2. 只有在喚醒成功後，才開始去抓文字、連線
                     startEdgeRead();
                 }).catch(e => {
-                    log('音訊喚醒失敗: ' + e.message, 'error');
-                    // 即使失敗也嘗試繼續，或許使用者之前有點過
-                    startEdgeRead();
+                    document.getElementById('debug-area').textContent = "音訊喚醒失敗: " + e.message;
+                    document.getElementById('debug-area').classList.remove('hidden');
+                    startEdgeRead(); // 還是嘗試執行
                 });
             }
         }
@@ -291,153 +247,83 @@
             audioQueue = [];
             textQueue = [];
             audioPlayer.pause();
-            audioPlayer.currentTime = 0;
             updateTTSUI(false);
-            if(window.currentWs) {
-                window.currentWs.close();
-                window.currentWs = null;
-            }
-            setStatus('已停止');
+            if(window.currentWs) { window.currentWs.close(); window.currentWs = null; }
+            document.getElementById('tts-status-msg').textContent = '已停止';
         }
 
         function startEdgeRead() {
-            // 抓取文字
             const currentContents = rendition.getContents();
-            if (!currentContents || currentContents.length === 0) {
-                log('錯誤: 抓不到頁面內容', 'error');
-                return;
-            }
+            if (!currentContents || currentContents.length === 0) return;
             
             let text = currentContents[0].document.body.innerText;
-            // 清理一些不必要的換行，避免 Edge 認為是結尾
             text = text.replace(/\s+/g, ' ').trim();
-            
-            if (!text) {
-                log('錯誤: 本頁沒有文字', 'error');
-                setStatus('本頁無文字');
-                return;
-            }
+            if (!text) { document.getElementById('tts-status-msg').textContent = '本頁無文字'; return; }
 
-            log(`準備朗讀，本頁長度: ${text.length} 字`);
-
-            // 切割句子 (Edge WebSocket 建議不要超過 200 字，這裡切短一點保險)
-            // 用句號、問號、驚嘆號切割
             const rawSentences = text.match(/[^。！？；]+[。！？；]?/g) || [text];
             textQueue = rawSentences.filter(s => s.trim().length > 0);
             
-            log(`已切割為 ${textQueue.length} 個片段`);
-
             isPlaying = true;
             updateTTSUI(true);
-            setStatus('連線 Edge 中...');
-            
+            document.getElementById('tts-status-msg').textContent = '連線中...';
             fetchNextChunk();
         }
 
         async function fetchNextChunk() {
             if (!isPlaying) return;
             if (textQueue.length === 0) {
-                if (audioQueue.length === 0) {
-                    stopTTS();
-                    setStatus('本頁結束');
-                }
+                if (audioQueue.length === 0) { stopTTS(); document.getElementById('tts-status-msg').textContent = '本頁結束'; }
                 return;
             }
-
-            // 如果佇列太多，先等等，避免記憶體爆掉
-            if (audioQueue.length > 2) {
-                setTimeout(fetchNextChunk, 1000);
-                return;
-            }
+            if (audioQueue.length > 2) { setTimeout(fetchNextChunk, 1000); return; }
 
             const sentence = textQueue.shift();
             isFetching = true;
-            setStatus(`下載中: ${sentence.substring(0, 5)}...`);
 
             try {
-                // 連線 WebSocket
                 const blob = await fetchEdgeTTS(sentence);
                 if (blob) {
                     const url = URL.createObjectURL(blob);
                     audioQueue.push(url);
-                    log(`片段下載成功 (${audioQueue.length} in queue)`);
-                    
-                    // 如果目前沒有在播，馬上播這個
-                    if (audioPlayer.paused || audioPlayer.ended || audioPlayer.src === silentWav) {
-                        playNextAudio();
-                    }
+                    if (audioPlayer.paused || audioPlayer.ended || audioPlayer.src === silentWav) playNextAudio();
                 }
             } catch (e) {
-                log(`下載失敗: ${e.message}`, 'error');
-                // 失敗不中斷，試下一句
+                console.error(e);
             } finally {
                 isFetching = false;
-                // 繼續抓下一句
                 fetchNextChunk();
             }
         }
 
         function playNextAudio() {
-            if (!isPlaying) return;
-            if (audioQueue.length === 0) return;
-
+            if (!isPlaying || audioQueue.length === 0) return;
             const url = audioQueue.shift();
-            log('開始播放片段...');
             
-            // 重要：重新指定 src 並播放
             audioPlayer.src = url;
             audioPlayer.play().then(() => {
-                setStatus('朗讀中...');
-                
-                // 設定鎖定畫面資訊 (Media Session)
+                document.getElementById('tts-status-msg').textContent = '朗讀中...';
                 if ('mediaSession' in navigator) {
-                    navigator.mediaSession.metadata = new MediaMetadata({
-                        title: document.getElementById('book-title').textContent,
-                        artist: "Edge TTS",
-                        album: "EPUB Reader"
-                    });
+                    navigator.mediaSession.metadata = new MediaMetadata({ title: document.getElementById('book-title').textContent, artist: "Edge TTS" });
                     navigator.mediaSession.setActionHandler('play', () => { isPlaying=true; audioPlayer.play(); });
                     navigator.mediaSession.setActionHandler('pause', () => { isPlaying=false; audioPlayer.pause(); });
                 }
-            }).catch(e => {
-                log('播放錯誤: ' + e.message, 'error');
-                // 如果這一段播不出來，試下一段
-                playNextAudio();
-            });
+            }).catch(e => { playNextAudio(); });
 
-            audioPlayer.onended = () => {
-                // 釋放記憶體
-                URL.revokeObjectURL(url);
-                playNextAudio();
-            };
+            audioPlayer.onended = () => { URL.revokeObjectURL(url); playNextAudio(); };
         }
 
-        // --- Edge TTS WebSocket 核心 (重寫版) ---
         function fetchEdgeTTS(text) {
             return new Promise((resolve, reject) => {
                 const requestId = crypto.randomUUID().replace(/-/g, '');
-                // 使用微軟公開的 WebSocket 端點
                 const ws = new WebSocket("wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4");
-                window.currentWs = ws; // 存起來方便中斷
-
+                window.currentWs = ws;
                 let audioParts = [];
                 let completed = false;
-
-                // 超時機制：如果 8 秒沒反應就報錯
-                const timer = setTimeout(() => {
-                    if(!completed) {
-                        ws.close();
-                        reject(new Error("Timeout (連線超時)"));
-                    }
-                }, 8000);
+                const timer = setTimeout(() => { if(!completed) { ws.close(); reject(new Error("Timeout")); } }, 10000);
 
                 ws.onopen = () => {
-                    log('WebSocket 連線成功');
-                    // 1. 發送設定
                     const conf = `X-Timestamp:${new Date().toString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n`;
                     ws.send(conf);
-
-                    // 2. 發送文字 (SSML)
                     const rateStr = document.getElementById('edge-rate').value + '%';
                     const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'><voice name='${edgeVoice}'><prosody rate='${rateStr}'>${text}</prosody></voice></speak>`;
                     const msg = `X-Timestamp:${new Date().toString()}\r\nX-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
@@ -446,112 +332,61 @@
 
                 ws.onmessage = async (event) => {
                     if (event.data instanceof Blob) {
-                        // 收到了二進位資料 (音訊)
                         const arrayBuffer = await event.data.arrayBuffer();
                         const view = new Uint8Array(arrayBuffer);
-                        
-                        // 尋找 header 結束點 (Pattern: Path:audio\r\n)
-                        // 簡單暴力法：尋找 0x50 0x61 0x74 0x68 0x3a 0x61 0x75 0x64 0x69 0x6f (Path:audio)
-                        // 再往後找 \r\n (0x0d 0x0a)
-                        
-                        // 為了效能和簡單，通常 header 都在前 128 bytes 內
-                        // 我們直接找 \r\n\r\n (0x0d 0x0a 0x0d 0x0a) 作為 header 結束
                         let headerEnd = -1;
                         for (let i = 0; i < Math.min(view.length, 200) - 3; i++) {
-                            if (view[i]===13 && view[i+1]===10 && view[i+2]===13 && view[i+3]===10) {
-                                headerEnd = i + 4;
-                                break;
-                            }
+                            if (view[i]===13 && view[i+1]===10 && view[i+2]===13 && view[i+3]===10) { headerEnd = i + 4; break; }
                         }
-
-                        if (headerEnd !== -1) {
-                            audioParts.push(view.slice(headerEnd));
-                        }
-                    } else if (typeof event.data === 'string') {
-                        // log('收到文字訊息: ' + event.data);
-                        if (event.data.includes('Path:turn.end')) {
-                            // 結束信號
-                            completed = true;
-                            clearTimeout(timer);
-                            ws.close();
-                            const finalBlob = new Blob(audioParts, { type: 'audio/mp3' });
-                            resolve(finalBlob);
-                        }
-                    }
-                };
-
-                ws.onerror = (e) => {
-                    clearTimeout(timer);
-                    reject(new Error("WebSocket Error"));
-                };
-                
-                ws.onclose = () => {
-                    if (!completed && audioParts.length > 0) {
-                        // 如果斷線但有收到資料，還是回傳
-                        completed = true;
-                        clearTimeout(timer);
+                        if (headerEnd !== -1) audioParts.push(view.slice(headerEnd));
+                    } else if (typeof event.data === 'string' && event.data.includes('Path:turn.end')) {
+                        completed = true; clearTimeout(timer); ws.close();
                         resolve(new Blob(audioParts, { type: 'audio/mp3' }));
-                    } else if (!completed) {
-                        reject(new Error("Connection Closed unexpectedly"));
                     }
                 };
+                ws.onerror = (e) => { clearTimeout(timer); reject(new Error("WS Error")); };
+                ws.onclose = () => { if (!completed) reject(new Error("Closed unexpectedly")); };
             });
         }
 
-        // --- UI 輔助 ---
-        function updateTTSUI(isPlay) {
-            const btn = document.getElementById('tts-play-btn');
-            const icon = btn.querySelector('i');
-            const indicator = document.getElementById('tts-active-indicator');
-            if (isPlay) {
-                icon.setAttribute('data-lucide', 'pause');
-                btn.classList.add('bg-red-500'); btn.classList.remove('bg-blue-600');
-                indicator.classList.remove('hidden');
-            } else {
-                icon.setAttribute('data-lucide', 'play');
-                btn.classList.remove('bg-red-500'); btn.classList.add('bg-blue-600');
-                indicator.classList.add('hidden');
-            }
-            lucide.createIcons();
-        }
-
-        function setStatus(msg) {
-            document.getElementById('tts-status-msg').textContent = msg;
-        }
-
-        function selectEdgeVoice(voice) {
-            edgeVoice = voice;
-            localStorage.setItem('edge_voice', voice);
-            updateVoiceBtnStyle(voice);
-        }
-        
-        function updateVoiceBtnStyle(voice) {
-            document.querySelectorAll('.edge-voice-btn').forEach(btn => {
-                if(btn.dataset.voice === voice) {
-                    btn.classList.add('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600');
-                    btn.classList.remove('border-gray-200');
-                } else {
-                    btn.classList.remove('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600');
-                    btn.classList.add('border-gray-200');
-                }
-            });
-        }
-
-        function switchTTSMode(mode) {
-            ttsMode = mode;
-            stopTTS();
-            document.getElementById('mode-edge-btn').classList.toggle('active', mode==='edge');
-            document.getElementById('mode-native-btn').classList.toggle('active', mode==='native');
-            document.getElementById('settings-edge').classList.toggle('hidden', mode!=='edge');
-            document.getElementById('settings-native').classList.toggle('hidden', mode!=='native');
-        }
-
-        // --- 其他功能 (翻頁、設定、目錄) ---
+        // UI Helpers
         function updateStatus(msg, type) { 
             document.getElementById('engine-status-text').textContent = msg; 
             const dot = document.getElementById('engine-status-dot');
             dot.className = `w-2 h-2 rounded-full ${type==='success'?'bg-green-500 status-dot-ready':'bg-red-500'}`;
         }
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            el.textContent = msg; el.classList.remove('hidden');
+            updateStatus('載入錯誤', 'error');
+        }
+        function updateTTSUI(isPlay) {
+            const btn = document.getElementById('tts-play-btn');
+            const icon = btn.querySelector('i');
+            if (isPlay) {
+                icon.setAttribute('data-lucide', 'pause');
+                btn.classList.add('bg-red-500'); btn.classList.remove('bg-blue-600');
+            } else {
+                icon.setAttribute('data-lucide', 'play');
+                btn.classList.remove('bg-red-500'); btn.classList.add('bg-blue-600');
+            }
+            lucide.createIcons();
+        }
+
+        function selectEdgeVoice(voice) { edgeVoice = voice; updateVoiceBtnStyle(voice); }
+        function updateVoiceBtnStyle(voice) {
+            document.querySelectorAll('.edge-voice-btn').forEach(btn => {
+                if(btn.dataset.voice === voice) {
+                    btn.classList.add('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600'); btn.classList.remove('border-gray-200');
+                } else {
+                    btn.classList.remove('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600'); btn.classList.add('border-gray-200');
+                }
+            });
+        }
+        function switchTTSMode(mode) {
+            // 簡化模式切換，目前只支援 Edge 與 Native
+        }
+
         function prevPage() { rendition && rendition.prev(); }
         function nextPage() { rendition && rendition.next(); }
         function toggleToc() { 
@@ -575,7 +410,12 @@
             });
         }
         function toggleSettings() { document.getElementById('settings-panel').classList.toggle('hidden'); }
-        function changeFontSize(d) { rendition.themes.fontSize(`${currentFontSize+=d}%`); document.getElementById('font-size-display').textContent=`${currentFontSize}%`; }
+        function changeFontSize(d) { 
+            const currentSize = parseInt(document.getElementById('font-size-display').textContent);
+            const newSize = Math.max(50, Math.min(200, currentSize + d));
+            rendition.themes.fontSize(`${newSize}%`); 
+            document.getElementById('font-size-display').textContent=`${newSize}%`; 
+        }
         function toggleTheme() { 
             document.documentElement.classList.toggle('dark');
             const isDark = document.documentElement.classList.contains('dark');
@@ -585,5 +425,3 @@
     </script>
 </body>
 </html>
-
-
