@@ -198,7 +198,8 @@
             </div>
             
             <p class="text-xs text-gray-400 text-center">
-                提示：將朗讀目前所在章節的文字。<br>請手動翻頁以繼續朗讀下一章。
+                <i data-lucide="info" class="w-3 h-3 inline mr-1"></i>支援 iPhone 鎖定背景播放<br>
+                將朗讀目前所在章節的文字。
             </p>
         </div>
     </div>
@@ -294,6 +295,9 @@
         let voices = [];
         let isSpeaking = false;
         let currentUtterance = null;
+        // 背景播放用的無聲音訊 (Base64 WAV)
+        let silentAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+        silentAudio.loop = true;
 
         // --- DOM 元素 ---
         const fileInput = document.getElementById('file-input');
@@ -438,9 +442,11 @@
             if (synth.speaking) {
                 if (synth.paused) {
                     synth.resume();
+                    silentAudio.play().catch(e => console.log("Audio play error", e));
                     updateTTSUI(true);
                 } else {
                     synth.pause();
+                    silentAudio.pause();
                     updateTTSUI(false);
                 }
             } else {
@@ -450,7 +456,25 @@
 
         function stopTTS() {
             synth.cancel();
+            silentAudio.pause();
             updateTTSUI(false);
+        }
+
+        // 設定媒體工作階段 (Media Session) 以支援鎖定畫面控制
+        function setupMediaSession() {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: bookTitle.textContent || "有聲書閱讀器",
+                    artist: "EPUB Reader",
+                    album: "Audiobook Mode",
+                    artwork: [{ src: 'https://cdn-icons-png.flaticon.com/512/3389/3389081.png', sizes: '512x512', type: 'image/png' }]
+                });
+
+                navigator.mediaSession.setActionHandler('play', playOrPauseTTS);
+                navigator.mediaSession.setActionHandler('pause', playOrPauseTTS);
+                navigator.mediaSession.setActionHandler('previoustrack', prevPage);
+                navigator.mediaSession.setActionHandler('nexttrack', nextPage);
+            }
         }
 
         function updateTTSUI(isPlaying) {
@@ -461,15 +485,18 @@
 
             if (isPlaying) {
                 icon.setAttribute('data-lucide', 'pause');
-                btn.className = "p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg"; // 保持藍色
+                btn.className = "p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg"; 
                 indicator.classList.remove('hidden');
                 statusText.textContent = "正在朗讀...";
                 statusText.classList.add('text-blue-500', 'font-bold');
+                setupMediaSession();
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
             } else {
                 icon.setAttribute('data-lucide', 'play');
                 indicator.classList.add('hidden');
                 statusText.textContent = "閱讀模式";
                 statusText.classList.remove('text-blue-500', 'font-bold');
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
             }
             lucide.createIcons();
         }
@@ -477,8 +504,11 @@
         function startReadingCurrentChapter() {
             if (!rendition) return;
 
-            // 1. 抓取目前章節內容
-            // epub.js 渲染時會產生一個 view，我們抓取裡面的純文字
+            // 播放無聲音訊以啟用背景播放能力
+            silentAudio.play().catch(e => {
+                console.warn("無法播放無聲音訊，背景播放可能失效", e);
+            });
+
             const contents = rendition.getContents();
             if (!contents || contents.length === 0) {
                 alert("無法抓取目前頁面文字");
@@ -493,23 +523,31 @@
                 return;
             }
 
-            // 2. 建立語音物件
             const utterance = new SpeechSynthesisUtterance(textToRead);
             const voice = getSelectedVoice();
             if (voice) utterance.voice = voice;
             
             utterance.rate = parseFloat(document.getElementById('rate-range').value);
 
-            // 3. 事件監聽
             utterance.onstart = () => updateTTSUI(true);
-            utterance.onend = () => updateTTSUI(false);
+            utterance.onend = () => {
+                // 自動翻頁並繼續 (簡易實作)
+                // console.log("本章結束，嘗試自動翻頁...");
+                // nextPage();
+                // setTimeout(() => {
+                //    if (synth.speaking) return; // 避免重複
+                //    startReadingCurrentChapter(); // 需謹慎使用，可能導致無限迴圈
+                // }, 2000);
+                updateTTSUI(false);
+                silentAudio.pause(); // 結束後暫停無聲
+            };
             utterance.onerror = (e) => {
                 console.error("TTS Error:", e);
                 updateTTSUI(false);
+                silentAudio.pause();
             };
 
-            // 4. 開始播放
-            synth.cancel(); // 先清除舊的
+            synth.cancel();
             synth.speak(utterance);
         }
 
