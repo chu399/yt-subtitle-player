@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GitHub Pages EPUB 閱讀器</title>
+    <title>GitHub Pages EPUB 聽書閱讀器</title>
     
-    <!-- 1. 載入 Tailwind CSS (樣式庫) -->
+    <!-- 1. 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
     <!-- 2. 載入圖標庫 (Lucide) -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
-        /* iOS 優化：防止彈性捲動導致的破圖 */
+        /* iOS 優化 */
         body {
             overscroll-behavior-y: none;
             -webkit-tap-highlight-color: transparent;
@@ -30,37 +30,47 @@
             overflow: hidden;
         }
         
-        /* 載入狀態指示燈動畫 */
-        @keyframes pulse-red {
-            0%, 100% { background-color: #ef4444; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            50% { background-color: #f87171; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
-        }
-        @keyframes pulse-green {
-            0%, 100% { background-color: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-            50% { background-color: #4ade80; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
-        }
+        /* 狀態燈動畫 */
+        @keyframes pulse-red { 0%, 100% { background-color: #ef4444; } 50% { background-color: #f87171; } }
+        @keyframes pulse-green { 0%, 100% { background-color: #22c55e; } 50% { background-color: #4ade80; } }
         .status-dot-loading { animation: pulse-red 2s infinite; }
         .status-dot-ready { animation: pulse-green 2s infinite; }
+
+        /* TTS 播放波紋動畫 */
+        @keyframes wave {
+            0% { transform: scaleY(1); }
+            50% { transform: scaleY(0.6); }
+            100% { transform: scaleY(1); }
+        }
+        .playing-indicator span {
+            display: inline-block;
+            width: 3px;
+            height: 12px;
+            background-color: #3b82f6;
+            margin-right: 2px;
+            animation: wave 1s infinite ease-in-out;
+        }
+        .playing-indicator span:nth-child(2) { animation-delay: 0.1s; }
+        .playing-indicator span:nth-child(3) { animation-delay: 0.2s; }
     </style>
 
-    <!-- 引擎載入腳本：包含自動切換備用線路功能 -->
+    <!-- 引擎載入腳本 -->
     <script>
-        // 定義資源清單
         const resources = {
             jszip: [
-                "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js", // 線路 1
-                "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js",            // 線路 2
-                "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" // 線路 3
+                "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+                "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js",
+                "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
             ],
             epubjs: [
-                "https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js", // 線路 1
-                "https://unpkg.com/epubjs@0.3.93/dist/epub.min.js",            // 線路 2
-                "https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js" // 線路 3
+                "https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js",
+                "https://unpkg.com/epubjs@0.3.93/dist/epub.min.js",
+                "https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js"
             ]
         };
 
         let loadedCount = 0;
-        const totalRequired = 2; // JSZip + EpubJS
+        const totalRequired = 2;
 
         function updateStatus(msg, type) {
             const el = document.getElementById('engine-status-text');
@@ -81,41 +91,29 @@
 
         function loadScript(name, urls, index = 0) {
             if (index >= urls.length) {
-                updateStatus(`${name} 載入失敗，請刷新頁面`, 'error');
+                updateStatus(`${name} 載入失敗`, 'error');
                 return;
             }
-
             const script = document.createElement('script');
             script.src = urls[index];
             script.onload = () => {
-                console.log(`${name} loaded from ${urls[index]}`);
                 loadedCount++;
                 if (loadedCount === totalRequired) {
                     updateStatus("引擎就緒", "success");
-                    // 啟用上傳按鈕
                     document.getElementById('upload-btn-label').classList.remove('opacity-50', 'cursor-not-allowed');
                     document.getElementById('file-input').disabled = false;
                 } else {
-                    updateStatus(`載入中... (${loadedCount}/${totalRequired})`, "loading");
+                    updateStatus(`載入中...`, "loading");
                 }
             };
-            script.onerror = () => {
-                console.warn(`${name} failed from ${urls[index]}, trying backup...`);
-                loadScript(name, urls, index + 1);
-            };
+            script.onerror = () => loadScript(name, urls, index + 1);
             document.head.appendChild(script);
         }
 
-        // 開始載入 (等待 DOM Ready)
         window.addEventListener('DOMContentLoaded', () => {
             updateStatus("正在下載引擎...", "loading");
-            // 先載入 JSZip
             loadScript('JSZip', resources.jszip);
-            
-            // 延遲一點點再載入 EpubJS 確保順序 (雖然瀏覽器通常會處理)
-            setTimeout(() => {
-                loadScript('EpubJS', resources.epubjs);
-            }, 100);
+            setTimeout(() => loadScript('EpubJS', resources.epubjs), 100);
         });
     </script>
 </head>
@@ -127,7 +125,6 @@
             <i data-lucide="book-open" class="text-blue-500 w-6 h-6"></i>
             <div class="flex flex-col">
                 <h1 class="text-sm sm:text-lg font-bold truncate max-w-[120px] sm:max-w-xs" id="book-title">閱讀器</h1>
-                <!-- 狀態顯示區 -->
                 <div class="flex items-center gap-1.5">
                     <div id="engine-status-dot" class="w-2 h-2 rounded-full bg-gray-300"></div>
                     <span id="engine-status-text" class="text-[10px] text-gray-400">初始化...</span>
@@ -136,17 +133,24 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <!-- 未載入書籍時顯示 -->
             <label id="upload-btn-label" class="opacity-50 cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm sm:text-base">
                 <i data-lucide="upload" class="w-4 h-4"></i>
                 <span class="hidden sm:inline">開啟書籍</span>
                 <span class="sm:hidden">開啟</span>
-                <!-- 預設 disabled，等引擎載入好才打開 -->
                 <input type="file" id="file-input" accept=".epub" class="hidden" disabled>
             </label>
 
-            <!-- 載入後顯示控制項 -->
+            <!-- 控制按鈕群組 -->
             <div id="controls" class="hidden flex items-center gap-1 sm:gap-2">
+                <!-- TTS 按鈕 -->
+                <button onclick="toggleTTS()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition relative" title="聽書">
+                    <i data-lucide="headphones" class="w-5 h-5"></i>
+                    <!-- 播放中的動畫指示 -->
+                    <div id="tts-active-indicator" class="hidden absolute top-1 right-1 flex items-end h-3 w-3 justify-center playing-indicator">
+                        <span></span><span></span><span></span>
+                    </div>
+                </button>
+
                 <button onclick="toggleToc()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition" title="目錄">
                     <i data-lucide="list" class="w-5 h-5"></i>
                 </button>
@@ -157,7 +161,49 @@
         </div>
     </header>
 
-    <!-- 設定面板 (浮動) -->
+    <!-- TTS 控制面板 -->
+    <div id="tts-panel" class="hidden absolute top-16 right-4 sm:right-16 z-50 p-4 rounded-xl shadow-2xl border w-72 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold flex items-center gap-2"><i data-lucide="mic" class="w-4 h-4"></i> 朗讀設定</h3>
+            <button onclick="toggleTTS()"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+
+        <div class="space-y-4">
+            <!-- 播放控制 -->
+            <div class="flex justify-center gap-4">
+                <button onclick="stopTTS()" class="p-3 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-600 dark:text-gray-200" title="停止">
+                    <i data-lucide="square" class="w-5 h-5 fill-current"></i>
+                </button>
+                <button id="tts-play-btn" onclick="playOrPauseTTS()" class="p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg transform hover:scale-105 transition" title="播放/暫停">
+                    <i data-lucide="play" class="w-6 h-6 fill-current pl-1"></i>
+                </button>
+            </div>
+
+            <!-- 語音選擇 -->
+            <div>
+                <label class="text-xs text-gray-500 mb-1 block">選擇語音 (若無繁中則用預設)</label>
+                <select id="voice-select" class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white truncate">
+                    <option value="">載入語音中...</option>
+                </select>
+            </div>
+
+            <!-- 語速 -->
+            <div>
+                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>慢</span>
+                    <span id="rate-value">1.0x</span>
+                    <span>快</span>
+                </div>
+                <input type="range" id="rate-range" min="0.5" max="2" step="0.1" value="1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" oninput="updateRateDisplay(this.value)">
+            </div>
+            
+            <p class="text-xs text-gray-400 text-center">
+                提示：將朗讀目前所在章節的文字。<br>請手動翻頁以繼續朗讀下一章。
+            </p>
+        </div>
+    </div>
+
+    <!-- 設定面板 -->
     <div id="settings-panel" class="hidden absolute top-16 right-4 z-50 p-4 rounded-xl shadow-2xl border w-64 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-semibold">閱讀設定</h3>
@@ -191,7 +237,7 @@
         </div>
     </div>
 
-    <!-- 目錄面板 (側滑) -->
+    <!-- 目錄面板 -->
     <div id="toc-overlay" class="hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity" onclick="toggleToc()"></div>
     <div id="toc-panel" class="fixed top-0 left-0 bottom-0 w-80 max-w-[85%] z-50 bg-white dark:bg-slate-800 shadow-2xl transform -translate-x-full transition-transform duration-300 flex flex-col">
         <div class="p-4 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center bg-gray-50 dark:bg-slate-900 pt-safe-top">
@@ -199,31 +245,25 @@
             <button onclick="toggleToc()" class="p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><i data-lucide="x" class="w-5 h-5 dark:text-white"></i></button>
         </div>
         <div class="flex-1 overflow-y-auto p-2" id="toc-list">
-            <p class="text-center text-gray-500 mt-10">目錄載入中或無資訊...</p>
+            <p class="text-center text-gray-500 mt-10">目錄載入中...</p>
         </div>
     </div>
 
     <!-- 主要閱讀區 -->
     <main class="flex-1 relative flex flex-col justify-center items-center bg-gray-50 dark:bg-slate-900 overflow-hidden w-full">
-        
-        <!-- 歡迎畫面 -->
         <div id="welcome-screen" class="text-center p-8 max-w-md animate-fade-in px-4">
             <div class="bg-blue-100 dark:bg-blue-900/30 w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center mx-auto mb-6">
                 <i data-lucide="book" class="w-10 h-10 sm:w-12 sm:h-12 text-blue-500"></i>
             </div>
-            <h2 class="text-xl sm:text-2xl font-bold mb-3 dark:text-white">EPUB 閱讀器</h2>
+            <h2 class="text-xl sm:text-2xl font-bold mb-3 dark:text-white">EPUB 聽書閱讀器</h2>
             <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8">
-                請確認左上角的燈號為<span class="text-green-600 font-bold">綠色</span>，<br>然後點擊右上角開啟書籍。
+                請等待左上角<span class="text-green-600 font-bold">綠燈</span>後，<br>點擊右上角開啟書籍。
             </p>
         </div>
-
-        <!-- 載入中動畫 -->
         <div id="loading-spinner" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
             <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p class="text-blue-600 dark:text-blue-400 font-medium animate-pulse">正在解析書籍...</p>
+            <p class="text-blue-600 dark:text-blue-400 font-medium animate-pulse">處理中...</p>
         </div>
-        
-        <!-- EPUB 容器 -->
         <div id="viewer" class="hidden w-full h-full bg-white dark:bg-slate-900 shadow-xl"></div>
     </main>
 
@@ -231,30 +271,31 @@
     <footer id="footer-nav" class="hidden h-14 flex items-center justify-between px-4 sm:px-8 border-t border-gray-200 bg-white dark:bg-slate-800 dark:border-slate-700 transition-colors flex-shrink-0 pb-safe-bottom">
         <button onclick="prevPage()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1 text-gray-700 dark:text-gray-200">
             <i data-lucide="chevron-left" class="w-6 h-6"></i>
-            <span class="hidden sm:inline">上一頁</span>
         </button>
-        
         <div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[150px] text-center select-none">
-            點擊兩側或使用按鍵翻頁
+            左右翻頁 | <span id="tts-status-text">閱讀模式</span>
         </div>
-
         <button onclick="nextPage()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1 text-gray-700 dark:text-gray-200">
-            <span class="hidden sm:inline">下一頁</span>
             <i data-lucide="chevron-right" class="w-6 h-6"></i>
         </button>
     </footer>
 
     <script>
-        // 初始化 Lucide 圖標
         lucide.createIcons();
 
-        // 變數宣告
+        // --- 全域變數 ---
         let book = null;
         let rendition = null;
         let currentFontSize = 100;
         let isDarkMode = false;
+        
+        // --- TTS 變數 ---
+        let synth = window.speechSynthesis;
+        let voices = [];
+        let isSpeaking = false;
+        let currentUtterance = null;
 
-        // DOM 元素
+        // --- DOM 元素 ---
         const fileInput = document.getElementById('file-input');
         const welcomeScreen = document.getElementById('welcome-screen');
         const viewer = document.getElementById('viewer');
@@ -263,218 +304,290 @@
         const loadingSpinner = document.getElementById('loading-spinner');
         const bookTitle = document.getElementById('book-title');
         const settingsPanel = document.getElementById('settings-panel');
+        const ttsPanel = document.getElementById('tts-panel');
         const tocPanel = document.getElementById('toc-panel');
-        const tocOverlay = document.getElementById('toc-overlay');
-        const tocList = document.getElementById('toc-list');
         const uploadLabel = document.getElementById('upload-btn-label');
+        const voiceSelect = document.getElementById('voice-select');
 
-        // 監聽主要檔案輸入
+        // --- 初始化 ---
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-
-        // 鍵盤控制
+        
         document.addEventListener('keyup', (e) => {
             if (!rendition) return;
             if (e.key === "ArrowLeft") prevPage();
             if (e.key === "ArrowRight") nextPage();
         });
 
-        // 處理檔案載入
+        // 載入語音列表
+        function populateVoiceList() {
+            voices = synth.getVoices();
+            voiceSelect.innerHTML = '';
+            
+            // 優先尋找中文語音
+            const zhVoices = voices.filter(v => v.lang.includes('zh') || v.lang.includes('TW') || v.lang.includes('CN'));
+            const otherVoices = voices.filter(v => !v.lang.includes('zh'));
+            
+            // 建立選項
+            [...zhVoices, ...otherVoices].forEach((voice) => {
+                const option = document.createElement('option');
+                option.textContent = `${voice.name} (${voice.lang})`;
+                option.setAttribute('data-lang', voice.lang);
+                option.setAttribute('data-name', voice.name);
+                voiceSelect.appendChild(option);
+            });
+
+            // 嘗試自動選擇台灣/國語語音
+            const twVoice = voices.find(v => v.lang === 'zh-TW') || voices.find(v => v.lang.includes('zh'));
+            if (twVoice) {
+                voiceSelect.value = `${twVoice.name} (${twVoice.lang})`;
+            }
+        }
+
+        populateVoiceList();
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = populateVoiceList;
+        }
+
+        // --- 核心功能 ---
         function handleFile(file) {
             if (!file) return;
-            
-            // 雙重檢查
             if (typeof window.ePub === 'undefined') {
-                alert("引擎尚未就緒，請等待左上角變綠燈，或重新整理頁面。");
+                alert("引擎尚未就緒");
                 return;
             }
 
-            // 顯示載入中
             loadingSpinner.classList.remove('hidden');
             welcomeScreen.classList.add('hidden');
-            
             bookTitle.textContent = file.name.replace('.epub', '');
 
-            // 如果有舊書，先銷毀 (簡易方式：刷新 DOM)
-            // 由於 epub.js 的 destroy 有時不乾淨，這裡直接清空 div
             const viewerDiv = document.getElementById('viewer');
             if (book) {
                 book.destroy();
                 viewerDiv.innerHTML = '';
+                stopTTS(); // 換書時停止朗讀
             }
 
             const reader = new FileReader();
             reader.onload = (e) => {
-                const bookData = e.target.result;
-                
                 try {
-                    // 初始化書籍
-                    book = ePub(bookData);
-                    
-                    // 渲染設定
+                    book = ePub(e.target.result);
                     rendition = book.renderTo("viewer", {
-                        width: "100%",
-                        height: "100%",
-                        flow: "paginated",
-                        manager: "default"
+                        width: "100%", height: "100%", flow: "paginated", manager: "default"
                     });
 
-                    // 顯示書籍
                     const savedCfi = localStorage.getItem(`epub-progress-${file.name}`);
                     rendition.display(savedCfi || undefined).then(() => {
                         loadingSpinner.classList.add('hidden');
                         viewer.classList.remove('hidden');
                         controls.classList.remove('hidden');
                         footerNav.classList.remove('hidden');
-                        uploadLabel.classList.add('hidden'); // 閱讀時隱藏上傳按鈕以節省空間
-                        
+                        uploadLabel.classList.add('hidden');
                         applyTheme();
                         rendition.themes.fontSize(`${currentFontSize}%`);
-                    }).catch(err => {
-                        console.error("Render Error:", err);
-                        alert("書籍渲染失敗，可能是檔案格式問題。");
-                        loadingSpinner.classList.add('hidden');
-                        welcomeScreen.classList.remove('hidden');
                     });
 
-                    // 載入目錄
-                    book.loaded.navigation.then((nav) => {
-                        renderToc(nav.toc);
-                    });
-
-                    // 監聽進度
+                    book.loaded.navigation.then((nav) => renderToc(nav.toc));
                     rendition.on('relocated', (location) => {
                         localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi);
                     });
-                    
-                    // 觸控翻頁支援 (簡易版)
-                    let touchStartX = 0;
-                    let touchEndX = 0;
-                    
-                    viewerDiv.addEventListener('touchstart', e => {
-                        touchStartX = e.changedTouches[0].screenX;
-                    }, {passive: true});
 
+                    // 觸控翻頁
+                    let ts = 0;
+                    viewerDiv.addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
                     viewerDiv.addEventListener('touchend', e => {
-                        touchEndX = e.changedTouches[0].screenX;
-                        handleSwipe();
+                        let te = e.changedTouches[0].screenX;
+                        if (te < ts - 50) nextPage();
+                        if (te > ts + 50) prevPage();
                     }, {passive: true});
-
-                    function handleSwipe() {
-                        if (touchEndX < touchStartX - 50) nextPage();
-                        if (touchEndX > touchStartX + 50) prevPage();
-                    }
 
                 } catch (err) {
-                    console.error("Book Init Error:", err);
-                    alert("書籍初始化失敗。");
+                    console.error(err);
+                    alert("書籍開啟失敗");
                     loadingSpinner.classList.add('hidden');
                 }
             };
-            
             reader.readAsArrayBuffer(file);
         }
 
-        // 翻頁功能
         function prevPage() { rendition && rendition.prev(); }
         function nextPage() { rendition && rendition.next(); }
 
-        // 目錄功能
+        // --- TTS 功能邏輯 ---
+        function toggleTTS() {
+            ttsPanel.classList.toggle('hidden');
+            settingsPanel.classList.add('hidden'); // 互斥
+            tocPanel.classList.add('-translate-x-full');
+            document.getElementById('toc-overlay').classList.add('hidden');
+        }
+
+        function updateRateDisplay(val) {
+            document.getElementById('rate-value').textContent = `${val}x`;
+            // 如果正在播放，即時調整速度需要重新播放 (Web Speech API 限制)
+            if (synth.speaking && !synth.paused) {
+                // 這裡選擇不即時重啟，避免體驗中斷，讓下一句生效
+            }
+        }
+
+        function getSelectedVoice() {
+            const selectedOption = voiceSelect.selectedOptions[0];
+            if (!selectedOption) return null;
+            return voices.find(v => v.name === selectedOption.getAttribute('data-name'));
+        }
+
+        function playOrPauseTTS() {
+            if (synth.speaking) {
+                if (synth.paused) {
+                    synth.resume();
+                    updateTTSUI(true);
+                } else {
+                    synth.pause();
+                    updateTTSUI(false);
+                }
+            } else {
+                startReadingCurrentChapter();
+            }
+        }
+
+        function stopTTS() {
+            synth.cancel();
+            updateTTSUI(false);
+        }
+
+        function updateTTSUI(isPlaying) {
+            const btn = document.getElementById('tts-play-btn');
+            const icon = btn.querySelector('i');
+            const indicator = document.getElementById('tts-active-indicator');
+            const statusText = document.getElementById('tts-status-text');
+
+            if (isPlaying) {
+                icon.setAttribute('data-lucide', 'pause');
+                btn.className = "p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg"; // 保持藍色
+                indicator.classList.remove('hidden');
+                statusText.textContent = "正在朗讀...";
+                statusText.classList.add('text-blue-500', 'font-bold');
+            } else {
+                icon.setAttribute('data-lucide', 'play');
+                indicator.classList.add('hidden');
+                statusText.textContent = "閱讀模式";
+                statusText.classList.remove('text-blue-500', 'font-bold');
+            }
+            lucide.createIcons();
+        }
+
+        function startReadingCurrentChapter() {
+            if (!rendition) return;
+
+            // 1. 抓取目前章節內容
+            // epub.js 渲染時會產生一個 view，我們抓取裡面的純文字
+            const contents = rendition.getContents();
+            if (!contents || contents.length === 0) {
+                alert("無法抓取目前頁面文字");
+                return;
+            }
+
+            const doc = contents[0].document;
+            let textToRead = doc.body.innerText;
+
+            if (!textToRead || textToRead.trim().length === 0) {
+                alert("本頁似乎沒有文字內容");
+                return;
+            }
+
+            // 2. 建立語音物件
+            const utterance = new SpeechSynthesisUtterance(textToRead);
+            const voice = getSelectedVoice();
+            if (voice) utterance.voice = voice;
+            
+            utterance.rate = parseFloat(document.getElementById('rate-range').value);
+
+            // 3. 事件監聽
+            utterance.onstart = () => updateTTSUI(true);
+            utterance.onend = () => updateTTSUI(false);
+            utterance.onerror = (e) => {
+                console.error("TTS Error:", e);
+                updateTTSUI(false);
+            };
+
+            // 4. 開始播放
+            synth.cancel(); // 先清除舊的
+            synth.speak(utterance);
+        }
+
+        // --- 其他 UI 功能 (目錄/設定) ---
         function toggleToc() {
             const isHidden = tocPanel.classList.contains('-translate-x-full');
             if (isHidden) {
                 tocPanel.classList.remove('-translate-x-full');
-                tocOverlay.classList.remove('hidden');
+                document.getElementById('toc-overlay').classList.remove('hidden');
+                settingsPanel.classList.add('hidden');
+                ttsPanel.classList.add('hidden');
             } else {
                 tocPanel.classList.add('-translate-x-full');
-                tocOverlay.classList.add('hidden');
+                document.getElementById('toc-overlay').classList.add('hidden');
             }
         }
 
         function renderToc(toc) {
-            tocList.innerHTML = '';
-            if (!toc || !toc.length) {
-                tocList.innerHTML = '<p class="text-center text-gray-500 mt-4">無目錄結構</p>';
-                return;
-            }
+            const list = document.getElementById('toc-list');
+            list.innerHTML = '';
+            if (!toc || !toc.length) { list.innerHTML = '<p class="text-center text-gray-400 mt-4">無目錄</p>'; return; }
             
             const createList = (items, level = 0) => {
                 const ul = document.createElement('ul');
-                ul.className = level > 0 ? 'ml-4 border-l border-gray-200 dark:border-slate-700 pl-2' : '';
-                
-                items.forEach(chapter => {
+                if (level > 0) ul.className = 'ml-4 border-l border-gray-200 dark:border-slate-700 pl-2';
+                items.forEach(ch => {
                     const li = document.createElement('li');
-                    li.className = 'mb-1';
-                    
                     const btn = document.createElement('button');
-                    btn.textContent = chapter.label.trim();
-                    btn.className = `w-full text-left p-3 py-2 rounded text-sm hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`;
+                    btn.textContent = ch.label.trim();
+                    btn.className = `w-full text-left p-2 rounded text-sm hover:bg-gray-100 dark:hover:bg-slate-700 ${isDarkMode?'text-gray-300':'text-gray-700'}`;
                     btn.onclick = () => {
-                        rendition.display(chapter.href);
+                        rendition.display(ch.href);
                         toggleToc();
+                        stopTTS(); // 跳章節時停止朗讀
                     };
-                    
                     li.appendChild(btn);
-                    
-                    if (chapter.subitems && chapter.subitems.length > 0) {
-                        li.appendChild(createList(chapter.subitems, level + 1));
-                    }
-                    
+                    if (ch.subitems && ch.subitems.length) li.appendChild(createList(ch.subitems, level+1));
                     ul.appendChild(li);
                 });
                 return ul;
             };
-
-            tocList.appendChild(createList(toc));
+            list.appendChild(createList(toc));
         }
 
-        // 設定功能
         function toggleSettings() {
             settingsPanel.classList.toggle('hidden');
+            ttsPanel.classList.add('hidden');
+            tocPanel.classList.add('-translate-x-full');
+            document.getElementById('toc-overlay').classList.add('hidden');
         }
 
-        function changeFontSize(amount) {
-            currentFontSize = Math.max(50, Math.min(200, currentFontSize + amount));
+        function changeFontSize(d) {
+            currentFontSize = Math.max(50, Math.min(200, currentFontSize + d));
             document.getElementById('font-size-display').textContent = `${currentFontSize}%`;
-            if (rendition) {
-                rendition.themes.fontSize(`${currentFontSize}%`);
-            }
+            if (rendition) rendition.themes.fontSize(`${currentFontSize}%`);
         }
 
         function toggleTheme() {
             isDarkMode = !isDarkMode;
-            const toggleBtn = document.getElementById('theme-toggle').firstElementChild;
-            
+            const btn = document.getElementById('theme-toggle').firstElementChild;
             if (isDarkMode) {
                 document.documentElement.classList.add('dark');
-                toggleBtn.classList.add('translate-x-6');
+                btn.classList.add('translate-x-6');
             } else {
                 document.documentElement.classList.remove('dark');
-                toggleBtn.classList.remove('translate-x-6');
+                btn.classList.remove('translate-x-6');
             }
-            
             applyTheme();
         }
 
         function applyTheme() {
             if (!rendition) return;
-            
-            if (isDarkMode) {
-                rendition.themes.register('dark', {
-                    body: { color: '#cbd5e1', background: '#0f172a' },
-                    p: { color: '#cbd5e1' },
-                    h1: { color: '#f1f5f9' },
-                    a: { color: '#60a5fa' }
-                });
-                rendition.themes.select('dark');
-            } else {
-                rendition.themes.register('light', {
-                    body: { color: '#000000', background: '#ffffff' }
-                });
-                rendition.themes.select('light');
-            }
+            const theme = isDarkMode ? 
+                { body: { color: '#cbd5e1', background: '#0f172a' }, p: { color: '#cbd5e1' }, h1: { color: '#f1f5f9' }, a: { color: '#60a5fa' } } : 
+                { body: { color: '#000000', background: '#ffffff' } };
+            rendition.themes.register(isDarkMode?'dark':'light', theme);
+            rendition.themes.select(isDarkMode?'dark':'light');
         }
     </script>
 </body>
 </html>
-
-
