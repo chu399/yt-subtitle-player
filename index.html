@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GitHub Pages EPUB 聽書閱讀器</title>
+    <title>GitHub Pages EPUB 聽書閱讀器 (Edge版)</title>
     
     <!-- 1. 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -52,6 +52,14 @@
         }
         .playing-indicator span:nth-child(2) { animation-delay: 0.1s; }
         .playing-indicator span:nth-child(3) { animation-delay: 0.2s; }
+        
+        /* 頁籤樣式 */
+        .tab-btn {
+            @apply flex-1 text-[10px] sm:text-xs py-2 rounded-md transition text-gray-500 dark:text-gray-400 whitespace-nowrap;
+        }
+        .tab-btn.active {
+            @apply bg-white dark:bg-slate-600 shadow text-blue-600 font-bold dark:text-blue-300;
+        }
     </style>
 
     <!-- 引擎載入腳本 -->
@@ -114,6 +122,16 @@
             updateStatus("正在下載引擎...", "loading");
             loadScript('JSZip', resources.jszip);
             setTimeout(() => loadScript('EpubJS', resources.epubjs), 100);
+            
+            // 載入儲存的 API Keys
+            const savedOpenAI = localStorage.getItem('openai_api_key');
+            if(savedOpenAI) document.getElementById('openai-key').value = savedOpenAI;
+            
+            const savedAzureKey = localStorage.getItem('azure_api_key');
+            if(savedAzureKey) document.getElementById('azure-key').value = savedAzureKey;
+            
+            const savedAzureRegion = localStorage.getItem('azure_region');
+            if(savedAzureRegion) document.getElementById('azure-region').value = savedAzureRegion;
         });
     </script>
 </head>
@@ -140,17 +158,13 @@
                 <input type="file" id="file-input" accept=".epub" class="hidden" disabled>
             </label>
 
-            <!-- 控制按鈕群組 -->
             <div id="controls" class="hidden flex items-center gap-1 sm:gap-2">
-                <!-- TTS 按鈕 -->
                 <button onclick="toggleTTS()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition relative" title="聽書">
                     <i data-lucide="headphones" class="w-5 h-5"></i>
-                    <!-- 播放中的動畫指示 -->
                     <div id="tts-active-indicator" class="hidden absolute top-1 right-1 flex items-end h-3 w-3 justify-center playing-indicator">
                         <span></span><span></span><span></span>
                     </div>
                 </button>
-
                 <button onclick="toggleToc()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition" title="目錄">
                     <i data-lucide="list" class="w-5 h-5"></i>
                 </button>
@@ -162,7 +176,7 @@
     </header>
 
     <!-- TTS 控制面板 -->
-    <div id="tts-panel" class="hidden absolute top-16 right-4 sm:right-16 z-50 p-4 rounded-xl shadow-2xl border w-72 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in">
+    <div id="tts-panel" class="hidden absolute top-16 right-4 sm:right-16 z-50 p-4 rounded-xl shadow-2xl border w-80 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in max-h-[80vh] overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-semibold flex items-center gap-2"><i data-lucide="mic" class="w-4 h-4"></i> 朗讀設定</h3>
             <button onclick="toggleTTS()"><i data-lucide="x" class="w-4 h-4"></i></button>
@@ -178,33 +192,124 @@
                     <i data-lucide="play" class="w-6 h-6 fill-current pl-1"></i>
                 </button>
             </div>
-
-            <!-- 語音選擇 -->
-            <div>
-                <label class="text-xs text-gray-500 mb-1 block">選擇語音 (若無繁中則用預設)</label>
-                <select id="voice-select" class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white truncate">
-                    <option value="">載入語音中...</option>
-                </select>
+            
+            <div class="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                <p id="tts-status-msg" class="text-xs text-blue-600 dark:text-blue-300 text-center">準備就緒</p>
             </div>
 
-            <!-- 語速 -->
-            <div>
-                <div class="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>慢</span>
-                    <span id="rate-value">1.0x</span>
-                    <span>快</span>
+            <!-- 模式切換 Tabs -->
+            <div class="flex rounded-lg bg-gray-100 dark:bg-slate-700 p-1">
+                <button onclick="switchTTSMode('edge')" id="mode-edge-btn" class="tab-btn active text-blue-600 font-bold bg-white dark:bg-slate-600 shadow">
+                    Edge (免費)
+                </button>
+                <button onclick="switchTTSMode('native')" id="mode-native-btn" class="tab-btn">
+                    內建
+                </button>
+                <button onclick="switchTTSMode('azure')" id="mode-azure-btn" class="tab-btn">
+                    Azure
+                </button>
+                <button onclick="switchTTSMode('openai')" id="mode-openai-btn" class="tab-btn">
+                    OpenAI
+                </button>
+            </div>
+
+            <!-- 1. Edge TTS 設定區 (新功能) -->
+            <div id="settings-edge">
+                <div class="p-2 bg-green-50 dark:bg-green-900/20 rounded text-[10px] text-green-700 dark:text-green-300 mb-2">
+                    直接連線微軟 Edge 瀏覽器服務。<br>
+                    <strong>完全免費，無需 API Key。</strong>
                 </div>
-                <input type="range" id="rate-range" min="0.5" max="2" step="0.1" value="1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" oninput="updateRateDisplay(this.value)">
+                <label class="text-xs text-gray-500 mb-1 block">台灣神經網路語音</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="selectEdgeVoice('zh-TW-HsiaoChenNeural')" class="edge-voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center border-blue-500 bg-blue-50 dark:bg-slate-600" data-voice="zh-TW-HsiaoChenNeural">
+                        <span class="font-bold block">曉臻 (女)</span>
+                        <span class="text-[10px] opacity-70">最自然/有感情</span>
+                    </button>
+                    <button onclick="selectEdgeVoice('zh-TW-YunJheNeural')" class="edge-voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center" data-voice="zh-TW-YunJheNeural">
+                        <span class="font-bold block">雲哲 (男)</span>
+                        <span class="text-[10px] opacity-70">新聞/沉穩</span>
+                    </button>
+                    <button onclick="selectEdgeVoice('zh-TW-HsiaoYuNeural')" class="edge-voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center" data-voice="zh-TW-HsiaoYuNeural">
+                        <span class="font-bold block">曉雨 (女)</span>
+                        <span class="text-[10px] opacity-70">活潑/年輕</span>
+                    </button>
+                    <button onclick="selectEdgeVoice('zh-CN-XiaoxiaoNeural')" class="edge-voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center" data-voice="zh-CN-XiaoxiaoNeural">
+                        <span class="font-bold block">曉曉 (女)</span>
+                        <span class="text-[10px] opacity-70">大陸口音</span>
+                    </button>
+                </div>
+                <div class="mt-3">
+                    <label class="text-xs text-gray-500 mb-1 block">語速調整</label>
+                    <input type="range" id="edge-rate" min="-50" max="50" step="5" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" oninput="document.getElementById('edge-rate-val').textContent = (this.value > 0 ? '+' : '') + this.value + '%'">
+                    <div class="text-center text-xs text-gray-400 mt-1" id="edge-rate-val">0%</div>
+                </div>
+            </div>
+
+            <!-- 2. 內建語音設定區 -->
+            <div id="settings-native" class="hidden">
+                <label class="text-xs text-gray-500 mb-1 block">選擇語音 (iPhone 請至設定下載增強版)</label>
+                <select id="voice-select" class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white truncate">
+                    <option value="">載入中...</option>
+                </select>
+                <div class="mt-3">
+                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>慢</span><span>語速</span><span>快</span>
+                    </div>
+                    <input type="range" id="rate-range" min="0.5" max="2" step="0.1" value="1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" oninput="updateRateDisplay(this.value)">
+                </div>
+            </div>
+
+            <!-- 3. Azure 設定區 -->
+            <div id="settings-azure" class="hidden space-y-3">
+                <div class="p-2 bg-gray-50 dark:bg-slate-700 rounded text-[10px] text-gray-500">
+                    <a href="https://azure.microsoft.com/zh-tw/free/cognitive-services/" target="_blank" class="text-blue-500 underline">申請 Azure Key</a> (每月50萬字免費)
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">地區 (Region)</label>
+                        <input type="text" id="azure-region" placeholder="eastasia" class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white" value="eastasia" onchange="saveAzureConfig()">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">API Key</label>
+                        <input type="password" id="azure-key" placeholder="Key..." class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white" onchange="saveAzureConfig()">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">語音選擇</label>
+                    <select id="azure-voice-select" class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white" onchange="azureVoice = this.value">
+                        <option value="zh-TW-HsiaoChenNeural">曉臻 (女) - 台灣標準</option>
+                        <option value="zh-TW-YunJheNeural">雲哲 (男) - 台灣標準</option>
+                        <option value="zh-TW-HsiaoYuNeural">曉雨 (女) - 台灣活潑</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 4. OpenAI 設定區 -->
+            <div id="settings-openai" class="hidden space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block flex justify-between">
+                        <span>API Key (付費)</span>
+                        <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-500 hover:underline">取得 Key</a>
+                    </label>
+                    <input type="password" id="openai-key" placeholder="sk-..." class="w-full text-sm p-2 rounded border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 dark:text-white" onchange="saveOpenAIKey()">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">AI 聲音模型</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button onclick="selectOpenAIVoice('alloy')" class="voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center" data-voice="alloy">Alloy</button>
+                        <button onclick="selectOpenAIVoice('shimmer')" class="voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center border-blue-500 bg-blue-50 dark:bg-slate-600" data-voice="shimmer">Shimmer</button>
+                        <button onclick="selectOpenAIVoice('nova')" class="voice-btn p-2 text-xs border rounded hover:bg-blue-50 dark:hover:bg-slate-600 text-center" data-voice="nova">Nova</button>
+                    </div>
+                </div>
             </div>
             
-            <p class="text-xs text-gray-400 text-center">
-                <i data-lucide="info" class="w-3 h-3 inline mr-1"></i>支援 iPhone 鎖定背景播放<br>
-                將朗讀目前所在章節的文字。
+            <p class="text-xs text-gray-400 text-center mt-2">
+                <i data-lucide="info" class="w-3 h-3 inline mr-1"></i>支援背景播放 (鎖定畫面控制)
             </p>
         </div>
     </div>
 
-    <!-- 設定面板 -->
+    <!-- 設定面板 (一般) -->
     <div id="settings-panel" class="hidden absolute top-16 right-4 z-50 p-4 rounded-xl shadow-2xl border w-64 bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 animate-fade-in">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-semibold">閱讀設定</h3>
@@ -256,9 +361,9 @@
             <div class="bg-blue-100 dark:bg-blue-900/30 w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center mx-auto mb-6">
                 <i data-lucide="book" class="w-10 h-10 sm:w-12 sm:h-12 text-blue-500"></i>
             </div>
-            <h2 class="text-xl sm:text-2xl font-bold mb-3 dark:text-white">EPUB 聽書閱讀器</h2>
+            <h2 class="text-xl sm:text-2xl font-bold mb-3 dark:text-white">EPUB 聽書閱讀器 (Edge版)</h2>
             <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8">
-                請等待左上角<span class="text-green-600 font-bold">綠燈</span>後，<br>點擊右上角開啟書籍。
+                支援 Edge 免費高品質語音。<br>請等待左上角<span class="text-green-600 font-bold">綠燈</span>後開啟書籍。
             </p>
         </div>
         <div id="loading-spinner" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
@@ -274,7 +379,7 @@
             <i data-lucide="chevron-left" class="w-6 h-6"></i>
         </button>
         <div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[150px] text-center select-none">
-            左右翻頁 | <span id="tts-status-text">閱讀模式</span>
+            左右翻頁 | <span id="footer-status-text">閱讀模式</span>
         </div>
         <button onclick="nextPage()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1 text-gray-700 dark:text-gray-200">
             <i data-lucide="chevron-right" class="w-6 h-6"></i>
@@ -290,12 +395,33 @@
         let currentFontSize = 100;
         let isDarkMode = false;
         
-        // --- TTS 變數 ---
+        // --- TTS 相關 ---
+        let ttsMode = 'edge'; // 預設使用 Edge
+        
+        // Native
         let synth = window.speechSynthesis;
         let voices = [];
-        let isSpeaking = false;
-        let currentUtterance = null;
-        // 背景播放用的無聲音訊 (Base64 WAV)
+        
+        // OpenAI
+        let openAIKey = '';
+        let openAIVoice = 'shimmer';
+        
+        // Azure
+        let azureKey = '';
+        let azureRegion = 'eastasia';
+        let azureVoice = 'zh-TW-HsiaoChenNeural';
+
+        // Edge (New!)
+        let edgeVoice = 'zh-TW-HsiaoChenNeural';
+        
+        // 播放 Queue
+        let audioQueue = []; 
+        let textQueue = [];
+        let isFetching = false;
+        let isPlaying = false;
+        let currentAudio = null;
+        
+        // 背景播放用無聲音訊
         let silentAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
         silentAudio.loop = true;
 
@@ -312,72 +438,32 @@
         const tocPanel = document.getElementById('toc-panel');
         const uploadLabel = document.getElementById('upload-btn-label');
         const voiceSelect = document.getElementById('voice-select');
+        const statusMsg = document.getElementById('tts-status-msg');
 
         // --- 初始化 ---
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-        
         document.addEventListener('keyup', (e) => {
             if (!rendition) return;
             if (e.key === "ArrowLeft") prevPage();
             if (e.key === "ArrowRight") nextPage();
         });
 
-        // 載入語音列表
-        function populateVoiceList() {
-            voices = synth.getVoices();
-            voiceSelect.innerHTML = '';
-            
-            // 優先尋找中文語音
-            const zhVoices = voices.filter(v => v.lang.includes('zh') || v.lang.includes('TW') || v.lang.includes('CN'));
-            const otherVoices = voices.filter(v => !v.lang.includes('zh'));
-            
-            // 建立選項
-            [...zhVoices, ...otherVoices].forEach((voice) => {
-                const option = document.createElement('option');
-                option.textContent = `${voice.name} (${voice.lang})`;
-                option.setAttribute('data-lang', voice.lang);
-                option.setAttribute('data-name', voice.name);
-                voiceSelect.appendChild(option);
-            });
-
-            // 嘗試自動選擇台灣/國語語音
-            const twVoice = voices.find(v => v.lang === 'zh-TW') || voices.find(v => v.lang.includes('zh'));
-            if (twVoice) {
-                voiceSelect.value = `${twVoice.name} (${twVoice.lang})`;
-            }
-        }
-
-        populateVoiceList();
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = populateVoiceList;
-        }
-
-        // --- 核心功能 ---
+        // --- 核心功能 (檔案載入) ---
         function handleFile(file) {
             if (!file) return;
-            if (typeof window.ePub === 'undefined') {
-                alert("引擎尚未就緒");
-                return;
-            }
+            if (typeof window.ePub === 'undefined') { alert("引擎尚未就緒"); return; }
 
             loadingSpinner.classList.remove('hidden');
             welcomeScreen.classList.add('hidden');
             bookTitle.textContent = file.name.replace('.epub', '');
 
-            const viewerDiv = document.getElementById('viewer');
-            if (book) {
-                book.destroy();
-                viewerDiv.innerHTML = '';
-                stopTTS(); // 換書時停止朗讀
-            }
+            if (book) { book.destroy(); document.getElementById('viewer').innerHTML = ''; stopTTS(); }
 
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
                     book = ePub(e.target.result);
-                    rendition = book.renderTo("viewer", {
-                        width: "100%", height: "100%", flow: "paginated", manager: "default"
-                    });
+                    rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated", manager: "default" });
 
                     const savedCfi = localStorage.getItem(`epub-progress-${file.name}`);
                     rendition.display(savedCfi || undefined).then(() => {
@@ -387,62 +473,126 @@
                         footerNav.classList.remove('hidden');
                         uploadLabel.classList.add('hidden');
                         applyTheme();
-                        rendition.themes.fontSize(`${currentFontSize}%`);
                     });
 
                     book.loaded.navigation.then((nav) => renderToc(nav.toc));
-                    rendition.on('relocated', (location) => {
-                        localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi);
-                    });
-
+                    rendition.on('relocated', (location) => localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi));
+                    
                     // 觸控翻頁
                     let ts = 0;
-                    viewerDiv.addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
-                    viewerDiv.addEventListener('touchend', e => {
+                    document.getElementById('viewer').addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
+                    document.getElementById('viewer').addEventListener('touchend', e => {
                         let te = e.changedTouches[0].screenX;
                         if (te < ts - 50) nextPage();
                         if (te > ts + 50) prevPage();
                     }, {passive: true});
 
-                } catch (err) {
-                    console.error(err);
-                    alert("書籍開啟失敗");
-                    loadingSpinner.classList.add('hidden');
-                }
+                } catch (err) { console.error(err); alert("書籍開啟失敗"); loadingSpinner.classList.add('hidden'); }
             };
             reader.readAsArrayBuffer(file);
         }
 
-        function prevPage() { rendition && rendition.prev(); }
-        function nextPage() { rendition && rendition.next(); }
+        // --- TTS 模式切換 ---
+        function switchTTSMode(mode) {
+            stopTTS();
+            ttsMode = mode;
+            
+            // UI 更新
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`mode-${mode}-btn`).classList.add('active');
+            
+            ['native', 'azure', 'openai', 'edge'].forEach(m => {
+                const el = document.getElementById(`settings-${m}`);
+                if(el) el.classList.add('hidden');
+            });
+            const target = document.getElementById(`settings-${mode}`);
+            if(target) target.classList.remove('hidden');
 
-        // --- TTS 功能邏輯 ---
-        function toggleTTS() {
-            ttsPanel.classList.toggle('hidden');
-            settingsPanel.classList.add('hidden'); // 互斥
-            tocPanel.classList.add('-translate-x-full');
-            document.getElementById('toc-overlay').classList.add('hidden');
+            // 狀態文字
+            if (mode === 'native') statusMsg.textContent = "內建語音 (免費)";
+            else if (mode === 'edge') statusMsg.textContent = "Edge 線上語音 (免費/高品質)";
+            else if (mode === 'azure') statusMsg.textContent = "Azure (免費額度)";
+            else statusMsg.textContent = "OpenAI (付費)";
         }
 
-        function updateRateDisplay(val) {
-            document.getElementById('rate-value').textContent = `${val}x`;
-            // 如果正在播放，即時調整速度需要重新播放 (Web Speech API 限制)
-            if (synth.speaking && !synth.paused) {
-                // 這裡選擇不即時重啟，避免體驗中斷，讓下一句生效
+        function saveOpenAIKey() {
+            const key = document.getElementById('openai-key').value.trim();
+            openAIKey = key;
+            localStorage.setItem('openai_api_key', key);
+        }
+        
+        function saveAzureConfig() {
+            azureKey = document.getElementById('azure-key').value.trim();
+            azureRegion = document.getElementById('azure-region').value.trim();
+            localStorage.setItem('azure_api_key', azureKey);
+            localStorage.setItem('azure_region', azureRegion);
+        }
+
+        function selectOpenAIVoice(voice) {
+            openAIVoice = voice;
+            updateVoiceBtnStyle('.voice-btn', voice);
+        }
+        
+        function selectEdgeVoice(voice) {
+            edgeVoice = voice;
+            updateVoiceBtnStyle('.edge-voice-btn', voice);
+        }
+
+        function updateVoiceBtnStyle(selector, activeVoice) {
+            document.querySelectorAll(selector).forEach(btn => {
+                if (btn.dataset.voice === activeVoice) {
+                    btn.classList.add('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600');
+                } else {
+                    btn.classList.remove('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600');
+                }
+            });
+        }
+
+        // --- Native TTS 列表 ---
+        function populateVoiceList() {
+            voices = synth.getVoices();
+            voiceSelect.innerHTML = '';
+            const zhVoices = voices.filter(v => v.lang.includes('zh') || v.lang.includes('TW'));
+            const otherVoices = voices.filter(v => !v.lang.includes('zh'));
+            [...zhVoices, ...otherVoices].forEach((voice) => {
+                const option = document.createElement('option');
+                option.textContent = `${voice.name} (${voice.lang})`;
+                option.setAttribute('data-name', voice.name);
+                voiceSelect.appendChild(option);
+            });
+            const twVoice = voices.find(v => v.lang === 'zh-TW');
+            if (twVoice) voiceSelect.value = `${twVoice.name} (${twVoice.lang})`;
+        }
+        if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = populateVoiceList;
+        populateVoiceList();
+
+        // --- 播放控制中心 ---
+        function playOrPauseTTS() {
+            if (ttsMode === 'native') {
+                playNativeTTS();
+            } else {
+                playCloudTTS(); // Cloud: Edge, Azure, OpenAI
             }
         }
 
-        function getSelectedVoice() {
-            const selectedOption = voiceSelect.selectedOptions[0];
-            if (!selectedOption) return null;
-            return voices.find(v => v.name === selectedOption.getAttribute('data-name'));
+        function stopTTS() {
+            synth.cancel();
+            if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+            audioQueue = [];
+            textQueue = [];
+            isPlaying = false;
+            isFetching = false;
+            silentAudio.pause();
+            updateTTSUI(false);
+            statusMsg.textContent = "已停止";
         }
 
-        function playOrPauseTTS() {
+        // --- Native 實作 ---
+        function playNativeTTS() {
             if (synth.speaking) {
                 if (synth.paused) {
                     synth.resume();
-                    silentAudio.play().catch(e => console.log("Audio play error", e));
+                    silentAudio.play().catch(()=>{});
                     updateTTSUI(true);
                 } else {
                     synth.pause();
@@ -450,26 +600,271 @@
                     updateTTSUI(false);
                 }
             } else {
-                startReadingCurrentChapter();
+                startReadingNative();
             }
         }
 
-        function stopTTS() {
+        function startReadingNative() {
+            const text = getCurrentPageText();
+            if (!text) return;
+            const utterance = new SpeechSynthesisUtterance(text);
+            const selectedOption = voiceSelect.selectedOptions[0];
+            if (selectedOption) {
+                const voice = voices.find(v => v.name === selectedOption.getAttribute('data-name'));
+                if (voice) utterance.voice = voice;
+            }
+            utterance.rate = parseFloat(document.getElementById('rate-range').value);
+            utterance.onstart = () => { silentAudio.play().catch(()=>{}); updateTTSUI(true); };
+            utterance.onend = () => { silentAudio.pause(); updateTTSUI(false); };
+            utterance.onerror = () => { silentAudio.pause(); updateTTSUI(false); };
             synth.cancel();
-            silentAudio.pause();
-            updateTTSUI(false);
+            synth.speak(utterance);
         }
 
-        // 設定媒體工作階段 (Media Session) 以支援鎖定畫面控制
+        // --- 雲端/Edge TTS 共用邏輯 ---
+        function playCloudTTS() {
+            if (isPlaying) {
+                if (currentAudio && !currentAudio.paused) {
+                    currentAudio.pause();
+                    silentAudio.pause();
+                    updateTTSUI(false);
+                } else if (currentAudio && currentAudio.paused) {
+                    currentAudio.play();
+                    silentAudio.play().catch(()=>{});
+                    updateTTSUI(true);
+                } else {
+                    startReadingCloud();
+                }
+            } else {
+                startReadingCloud();
+            }
+        }
+
+        function startReadingCloud() {
+            const text = getCurrentPageText();
+            if (!text) return;
+
+            // 檢查 Key
+            if (ttsMode === 'azure' && !document.getElementById('azure-key').value) {
+                alert("請輸入 Azure Key"); return;
+            }
+            if (ttsMode === 'openai' && !document.getElementById('openai-key').value) {
+                alert("請輸入 OpenAI Key"); return;
+            }
+
+            // 切割句子 (Edge 最好不要一次送太長)
+            const rawSentences = text.match(/[^。！？；\n]+[。！？；\n]?/g) || [text];
+            textQueue = rawSentences.filter(s => s.trim().length > 0);
+            
+            audioQueue = [];
+            isPlaying = true;
+            
+            silentAudio.play().catch(()=>{});
+            updateTTSUI(true);
+            
+            let sourceName = "OpenAI";
+            if (ttsMode === 'edge') sourceName = "Edge Free";
+            if (ttsMode === 'azure') sourceName = "Azure";
+            statusMsg.textContent = `${sourceName} 連線中...`;
+
+            fetchNextCloudChunk();
+        }
+
+        async function fetchNextCloudChunk() {
+            if (textQueue.length === 0) return;
+            if (!isPlaying) return;
+
+            const sentence = textQueue.shift();
+            isFetching = true;
+
+            try {
+                let blob;
+                if (ttsMode === 'edge') {
+                    blob = await fetchEdgeTTS(sentence);
+                } else if (ttsMode === 'azure') {
+                    blob = await fetchAzureTTS(sentence);
+                } else {
+                    blob = await fetchOpenAITTS(sentence);
+                }
+
+                if (!blob) throw new Error("No audio data");
+
+                const url = URL.createObjectURL(blob);
+                audioQueue.push(url);
+                
+                if (!currentAudio || currentAudio.ended || currentAudio.paused) {
+                    processAudioQueue();
+                }
+
+                fetchNextCloudChunk();
+
+            } catch (e) {
+                console.error(e);
+                statusMsg.textContent = "連線錯誤/失敗";
+                isFetching = false;
+                // 不停止，嘗試下一句，除非全是錯的
+            }
+        }
+
+        // --- Edge TTS 核心 (WebSocket Hack) ---
+        function fetchEdgeTTS(text) {
+            return new Promise((resolve, reject) => {
+                const requestId = crypto.randomUUID().replace(/-/g, '');
+                // 這是公開的 TrustedClientToken
+                const ws = new WebSocket("wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4");
+                
+                let audioData = [];
+                
+                ws.onopen = () => {
+                    // 1. Config
+                    const configMsg = `X-Timestamp:${new Date().toString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n`;
+                    ws.send(configMsg);
+                    
+                    // 2. SSML
+                    const rate = document.getElementById('edge-rate').value + '%';
+                    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'><voice name='${edgeVoice}'><prosody rate='${rate}'>${text}</prosody></voice></speak>`;
+                    const ssmlMsg = `X-Timestamp:${new Date().toString()}\r\nX-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
+                    ws.send(ssmlMsg);
+                };
+
+                ws.onmessage = (event) => {
+                    if (typeof event.data === 'string') {
+                        // 忽略 metadata (turn.start, turn.end 等)
+                    } else if (event.data instanceof Blob) {
+                        // Binary audio data
+                        // 需要去掉 header (通常是前2個字節之後找到 Path:audio\r\n 結尾)
+                        // 簡單處理：Edge 的 binary message 包含 text header，我們需要切掉它。
+                        // header 格式通常是: X-Timestamp:...\r\nContent-Type:...\r\nPath:audio\r\n\r\n[BINARY]
+                        // 我們用 FileReader 讀取並手動尋找 \r\n\r\n
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const arrayBuffer = reader.result;
+                            const view = new Uint8Array(arrayBuffer);
+                            
+                            // 尋找 header 結束位置 (0x0d 0x0a 0x0d 0x0a)
+                            let headerEnd = -1;
+                            for (let i = 0; i < view.length - 3; i++) {
+                                if (view[i] === 13 && view[i+1] === 10 && view[i+2] === 13 && view[i+3] === 10) {
+                                    headerEnd = i + 4;
+                                    break;
+                                }
+                            }
+                            
+                            if (headerEnd !== -1) {
+                                audioData.push(arrayBuffer.slice(headerEnd));
+                            }
+                        };
+                        reader.readAsArrayBuffer(event.data);
+                    }
+                };
+
+                ws.onclose = () => {
+                    if (audioData.length > 0) {
+                        const finalBlob = new Blob(audioData, { type: 'audio/mp3' });
+                        resolve(finalBlob);
+                    } else {
+                        reject(new Error("No audio received from Edge"));
+                    }
+                };
+
+                ws.onerror = (e) => reject(e);
+            });
+        }
+
+        async function fetchOpenAITTS(text) {
+            const response = await fetch("https://api.openai.com/v1/audio/speech", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${openAIKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "tts-1", input: text, voice: openAIVoice })
+            });
+            if (!response.ok) throw new Error("OpenAI Error");
+            return await response.blob();
+        }
+
+        async function fetchAzureTTS(text) {
+            const url = `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`;
+            const ssml = `<speak version='1.0' xml:lang='zh-TW'><voice xml:lang='zh-TW' xml:gender='Female' name='${azureVoice}'>${text}</voice></speak>`;
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Ocp-Apim-Subscription-Key": azureKey,
+                    "Content-Type": "application/ssml+xml",
+                    "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3"
+                },
+                body: ssml
+            });
+            if (!response.ok) throw new Error("Azure Error");
+            return await response.blob();
+        }
+
+        function processAudioQueue() {
+            if (!isPlaying) return;
+            if (audioQueue.length === 0) {
+                if (textQueue.length === 0 && !isFetching) {
+                    stopTTS();
+                    statusMsg.textContent = "本頁結束";
+                } else {
+                    statusMsg.textContent = "載入下一句...";
+                }
+                return;
+            }
+
+            const url = audioQueue.shift();
+            currentAudio = new Audio(url);
+            currentAudio.onended = () => processAudioQueue();
+            currentAudio.play().then(() => {
+                let label = "Edge";
+                if(ttsMode === 'azure') label = "Azure";
+                if(ttsMode === 'openai') label = "OpenAI";
+                statusMsg.textContent = `朗讀中 (${label})...`;
+                updateTTSUI(true);
+                setupMediaSession();
+            }).catch(e => console.error("Play error", e));
+        }
+
+        // --- 通用工具 ---
+        function getCurrentPageText() {
+            if (!rendition) return null;
+            const contents = rendition.getContents();
+            if (!contents || contents.length === 0) return null;
+            return contents[0].document.body.innerText;
+        }
+
+        function updateTTSUI(isPlaying) {
+            const btn = document.getElementById('tts-play-btn');
+            const icon = btn.querySelector('i');
+            const indicator = document.getElementById('tts-active-indicator');
+            const footerStatus = document.getElementById('footer-status-text');
+
+            if (isPlaying) {
+                icon.setAttribute('data-lucide', 'pause');
+                btn.className = "p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg"; 
+                indicator.classList.remove('hidden');
+                footerStatus.textContent = "朗讀中";
+                footerStatus.className = "text-blue-500 font-bold";
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
+            } else {
+                icon.setAttribute('data-lucide', 'play');
+                indicator.classList.add('hidden');
+                footerStatus.textContent = "閱讀模式";
+                footerStatus.className = "";
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+            }
+            lucide.createIcons();
+        }
+
         function setupMediaSession() {
             if ('mediaSession' in navigator) {
+                let artistName = "Device TTS";
+                if (ttsMode === 'azure') artistName = "Microsoft Azure";
+                if (ttsMode === 'openai') artistName = "OpenAI";
+                if (ttsMode === 'edge') artistName = "Edge Free";
+                
                 navigator.mediaSession.metadata = new MediaMetadata({
-                    title: bookTitle.textContent || "有聲書閱讀器",
-                    artist: "EPUB Reader",
-                    album: "Audiobook Mode",
-                    artwork: [{ src: 'https://cdn-icons-png.flaticon.com/512/3389/3389081.png', sizes: '512x512', type: 'image/png' }]
+                    title: bookTitle.textContent || "有聲書",
+                    artist: artistName,
+                    album: "Audiobook"
                 });
-
                 navigator.mediaSession.setActionHandler('play', playOrPauseTTS);
                 navigator.mediaSession.setActionHandler('pause', playOrPauseTTS);
                 navigator.mediaSession.setActionHandler('previoustrack', prevPage);
@@ -477,81 +872,19 @@
             }
         }
 
-        function updateTTSUI(isPlaying) {
-            const btn = document.getElementById('tts-play-btn');
-            const icon = btn.querySelector('i');
-            const indicator = document.getElementById('tts-active-indicator');
-            const statusText = document.getElementById('tts-status-text');
-
-            if (isPlaying) {
-                icon.setAttribute('data-lucide', 'pause');
-                btn.className = "p-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg"; 
-                indicator.classList.remove('hidden');
-                statusText.textContent = "正在朗讀...";
-                statusText.classList.add('text-blue-500', 'font-bold');
-                setupMediaSession();
-                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
-            } else {
-                icon.setAttribute('data-lucide', 'play');
-                indicator.classList.add('hidden');
-                statusText.textContent = "閱讀模式";
-                statusText.classList.remove('text-blue-500', 'font-bold');
-                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
-            }
-            lucide.createIcons();
+        // UI Helpers
+        function toggleTTS() {
+            ttsPanel.classList.toggle('hidden');
+            settingsPanel.classList.add('hidden');
+            tocPanel.classList.add('-translate-x-full');
+            document.getElementById('toc-overlay').classList.add('hidden');
         }
-
-        function startReadingCurrentChapter() {
-            if (!rendition) return;
-
-            // 播放無聲音訊以啟用背景播放能力
-            silentAudio.play().catch(e => {
-                console.warn("無法播放無聲音訊，背景播放可能失效", e);
-            });
-
-            const contents = rendition.getContents();
-            if (!contents || contents.length === 0) {
-                alert("無法抓取目前頁面文字");
-                return;
-            }
-
-            const doc = contents[0].document;
-            let textToRead = doc.body.innerText;
-
-            if (!textToRead || textToRead.trim().length === 0) {
-                alert("本頁似乎沒有文字內容");
-                return;
-            }
-
-            const utterance = new SpeechSynthesisUtterance(textToRead);
-            const voice = getSelectedVoice();
-            if (voice) utterance.voice = voice;
-            
-            utterance.rate = parseFloat(document.getElementById('rate-range').value);
-
-            utterance.onstart = () => updateTTSUI(true);
-            utterance.onend = () => {
-                // 自動翻頁並繼續 (簡易實作)
-                // console.log("本章結束，嘗試自動翻頁...");
-                // nextPage();
-                // setTimeout(() => {
-                //    if (synth.speaking) return; // 避免重複
-                //    startReadingCurrentChapter(); // 需謹慎使用，可能導致無限迴圈
-                // }, 2000);
-                updateTTSUI(false);
-                silentAudio.pause(); // 結束後暫停無聲
-            };
-            utterance.onerror = (e) => {
-                console.error("TTS Error:", e);
-                updateTTSUI(false);
-                silentAudio.pause();
-            };
-
-            synth.cancel();
-            synth.speak(utterance);
+        function toggleSettings() {
+            settingsPanel.classList.toggle('hidden');
+            ttsPanel.classList.add('hidden');
+            tocPanel.classList.add('-translate-x-full');
+            document.getElementById('toc-overlay').classList.add('hidden');
         }
-
-        // --- 其他 UI 功能 (目錄/設定) ---
         function toggleToc() {
             const isHidden = tocPanel.classList.contains('-translate-x-full');
             if (isHidden) {
@@ -564,68 +897,29 @@
                 document.getElementById('toc-overlay').classList.add('hidden');
             }
         }
-
-        function renderToc(toc) {
-            const list = document.getElementById('toc-list');
-            list.innerHTML = '';
-            if (!toc || !toc.length) { list.innerHTML = '<p class="text-center text-gray-400 mt-4">無目錄</p>'; return; }
-            
-            const createList = (items, level = 0) => {
-                const ul = document.createElement('ul');
-                if (level > 0) ul.className = 'ml-4 border-l border-gray-200 dark:border-slate-700 pl-2';
-                items.forEach(ch => {
-                    const li = document.createElement('li');
-                    const btn = document.createElement('button');
-                    btn.textContent = ch.label.trim();
-                    btn.className = `w-full text-left p-2 rounded text-sm hover:bg-gray-100 dark:hover:bg-slate-700 ${isDarkMode?'text-gray-300':'text-gray-700'}`;
-                    btn.onclick = () => {
-                        rendition.display(ch.href);
-                        toggleToc();
-                        stopTTS(); // 跳章節時停止朗讀
-                    };
-                    li.appendChild(btn);
-                    if (ch.subitems && ch.subitems.length) li.appendChild(createList(ch.subitems, level+1));
-                    ul.appendChild(li);
-                });
-                return ul;
-            };
-            list.appendChild(createList(toc));
-        }
-
-        function toggleSettings() {
-            settingsPanel.classList.toggle('hidden');
-            ttsPanel.classList.add('hidden');
-            tocPanel.classList.add('-translate-x-full');
-            document.getElementById('toc-overlay').classList.add('hidden');
-        }
-
+        function prevPage() { rendition && rendition.prev(); }
+        function nextPage() { rendition && rendition.next(); }
         function changeFontSize(d) {
             currentFontSize = Math.max(50, Math.min(200, currentFontSize + d));
             document.getElementById('font-size-display').textContent = `${currentFontSize}%`;
             if (rendition) rendition.themes.fontSize(`${currentFontSize}%`);
         }
-
+        function updateRateDisplay(val) { document.getElementById('rate-value').textContent = `${val}x`; }
         function toggleTheme() {
             isDarkMode = !isDarkMode;
             const btn = document.getElementById('theme-toggle').firstElementChild;
-            if (isDarkMode) {
-                document.documentElement.classList.add('dark');
-                btn.classList.add('translate-x-6');
-            } else {
-                document.documentElement.classList.remove('dark');
-                btn.classList.remove('translate-x-6');
-            }
+            if (isDarkMode) { document.documentElement.classList.add('dark'); btn.classList.add('translate-x-6'); }
+            else { document.documentElement.classList.remove('dark'); btn.classList.remove('translate-x-6'); }
             applyTheme();
         }
-
         function applyTheme() {
             if (!rendition) return;
-            const theme = isDarkMode ? 
-                { body: { color: '#cbd5e1', background: '#0f172a' }, p: { color: '#cbd5e1' }, h1: { color: '#f1f5f9' }, a: { color: '#60a5fa' } } : 
-                { body: { color: '#000000', background: '#ffffff' } };
+            const theme = isDarkMode ? { body: { color: '#cbd5e1', background: '#0f172a' }, p: { color: '#cbd5e1' }, h1: { color: '#f1f5f9' }, a: { color: '#60a5fa' } } : { body: { color: '#000000', background: '#ffffff' } };
             rendition.themes.register(isDarkMode?'dark':'light', theme);
             rendition.themes.select(isDarkMode?'dark':'light');
         }
     </script>
 </body>
 </html>
+
+
