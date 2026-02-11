@@ -1,427 +1,283 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>EPUB 閱讀器 (最終修復版)</title>
+import React, { useState, useEffect, useRef } from 'react';
+import { Play, Pause, Square, Volume2, Settings, List, Download, ArrowRight, BookOpen, Clock, RefreshCw } from 'lucide-react';
+
+const App = () => {
+  const [text, setText] = useState("歡迎使用電子書朗讀工具。如果您使用的是 Microsoft Edge 瀏覽器，您可以在下方的選單中找到高品質的「Microsoft Online」台灣語音（如曉臻、雲哲）。這類語音聽起來非常自然，且完全免費，非常適合用來朗讀長篇小說。");
+  const [voices, setVoices] = useState([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState("");
+  const [rate, setRate] = useState(1);
+  const [pitch, setPitch] = useState(1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
+  const [sentences, setSentences] = useState([]);
+  
+  const synth = window.speechSynthesis;
+  const utteranceRef = useRef(null);
+
+  // 初始化語音清單
+  const loadVoices = () => {
+    const availableVoices = synth.getVoices();
+    // 優先過濾出台灣中文與微軟線上語音
+    const filteredVoices = availableVoices.filter(v => v.lang.includes('zh-TW') || v.lang.includes('zh-HK'));
+    setVoices(availableVoices);
     
-    <!-- 1. 樣式庫 -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    // 預設選擇曉臻 (HsiaoChen) 或雲哲 (Yunjhe)
+    const defaultVoice = availableVoices.find(v => v.name.includes('HsiaoChen') || v.name.includes('曉臻')) || 
+                        availableVoices.find(v => v.name.includes('zh-TW')) ||
+                        availableVoices[0];
+    
+    if (defaultVoice && !selectedVoiceName) {
+      setSelectedVoiceName(defaultVoice.name);
+    }
+  };
 
-    <!-- 2. 核心引擎 (更換為 jsdelivr 源，通常更穩) -->
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+  useEffect(() => {
+    loadVoices();
+    if (synth.onvoiceschanged !== undefined) {
+      synth.onvoiceschanged = loadVoices;
+    }
+    return () => {
+      synth.cancel();
+    };
+  }, []);
 
-    <style>
-        body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
-        .dark ::-webkit-scrollbar-thumb { background: #475569; }
-        #viewer { height: calc(100vh - 120px); width: 100%; overflow: hidden; }
-        
-        @keyframes pulse-green { 0%, 100% { background-color: #22c55e; } 50% { background-color: #4ade80; } }
-        .status-dot-ready { animation: pulse-green 2s infinite; }
-        
-        .tab-btn { @apply flex-1 text-xs py-2 rounded-md transition text-gray-500 dark:text-gray-400 whitespace-nowrap border border-transparent; }
-        .tab-btn.active { @apply bg-white dark:bg-slate-600 shadow text-blue-600 font-bold dark:text-blue-300 border-gray-200 dark:border-slate-500; }
-    </style>
-</head>
-<body class="bg-gray-50 text-gray-800 transition-colors duration-300 h-screen flex flex-col select-none" id="app-body">
+  // 斷句邏輯：針對電子書優化
+  const splitIntoSentences = (rawText) => {
+    return rawText
+      .split(/([。！？；\n])/)
+      .reduce((acc, curr, idx) => {
+        if (idx % 2 === 0) {
+          if (curr.trim()) acc.push(curr);
+        } else {
+          if (acc.length > 0) acc[acc.length - 1] += curr;
+        }
+        return acc;
+      }, []);
+  };
 
-    <!-- 頂部導航 -->
-    <header class="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm dark:bg-slate-800 dark:border-slate-700 dark:text-gray-100 z-20">
-        <div class="flex items-center gap-3">
-            <i data-lucide="book-open" class="text-blue-500 w-6 h-6"></i>
-            <div class="flex flex-col">
-                <h1 class="text-sm font-bold truncate max-w-[120px]" id="book-title">閱讀器</h1>
-                <div class="flex items-center gap-1.5">
-                    <div id="engine-status-dot" class="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span id="engine-status-text" class="text-[10px] text-gray-400">連線中...</span>
-                </div>
+  const speakSentence = (index) => {
+    if (index >= sentences.length) {
+      handleStop();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(sentences[index]);
+    const voice = voices.find(v => v.name === selectedVoiceName);
+    if (voice) utterance.voice = voice;
+    
+    utterance.rate = rate;
+    utterance.pitch = pitch;
+
+    utterance.onstart = () => {
+      setCurrentSentenceIndex(index);
+      setIsPlaying(true);
+      setIsPaused(false);
+    };
+
+    utterance.onend = () => {
+      if (!isPaused) {
+        speakSentence(index + 1);
+      }
+    };
+
+    utterance.onerror = (event) => {
+      console.error("SpeechSynthesisUtterance Error:", event);
+      handleStop();
+    };
+
+    utteranceRef.current = utterance;
+    synth.speak(utterance);
+  };
+
+  const handlePlay = () => {
+    if (isPaused) {
+      synth.resume();
+      setIsPaused(false);
+      setIsPlaying(true);
+    } else {
+      synth.cancel();
+      const newSentences = splitIntoSentences(text);
+      setSentences(newSentences);
+      speakSentence(0);
+    }
+  };
+
+  const handlePause = () => {
+    synth.pause();
+    setIsPaused(true);
+    setIsPlaying(false);
+  };
+
+  const handleStop = () => {
+    synth.cancel();
+    setIsPlaying(false);
+    setIsPaused(false);
+    setCurrentSentenceIndex(0);
+  };
+
+  return (
+    <div className="min-h-screen bg-neutral-50 p-4 md:p-12 font-sans text-slate-800">
+      <div className="max-w-4xl mx-auto space-y-8">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-8 rounded-3xl shadow-sm border border-neutral-200">
+          <div className="flex items-center gap-5">
+            <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-lg shadow-blue-200">
+              <BookOpen size={32} />
             </div>
+            <div>
+              <h1 className="text-3xl font-black tracking-tight text-slate-900">Edge 網頁朗讀器</h1>
+              <p className="text-slate-500 font-medium">電子書長文本優化版本</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="px-4 py-2 bg-neutral-100 rounded-full text-xs font-bold text-neutral-500 flex items-center gap-2">
+              <RefreshCw size={14} /> 瀏覽器原生引擎
+            </div>
+          </div>
         </div>
 
-        <div class="flex items-center gap-2">
-            <label id="upload-btn-label" class="bg-blue-600 active:bg-blue-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-sm text-sm transition-transform active:scale-95 opacity-50 pointer-events-none">
-                <i data-lucide="upload" class="w-4 h-4"></i>
-                <span class="hidden sm:inline">開啟</span>
-                <input type="file" id="file-input" accept=".epub" class="hidden" disabled>
-            </label>
+        {/* Main Interface */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left: Input */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-white p-2 rounded-3xl shadow-sm border border-neutral-200 min-h-[400px] flex flex-col">
+              <textarea
+                className="flex-1 w-full p-6 text-xl leading-relaxed outline-none resize-none rounded-2xl placeholder:text-neutral-300"
+                placeholder="請在此貼上電子書章節內容..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+              <div className="p-4 bg-neutral-50 rounded-b-2xl border-t border-neutral-100 flex justify-between items-center text-sm font-medium text-neutral-500">
+                <span>總字數：{text.length} 字</span>
+                <span className="flex items-center gap-2"><Clock size={14} /> 預計朗讀：{Math.ceil(text.length / 250)} 分鐘</span>
+              </div>
+            </div>
+          </div>
 
-            <div id="controls" class="hidden flex items-center gap-1">
-                <button onclick="toggleTTS()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 relative active:bg-gray-200">
-                    <i data-lucide="headphones" class="w-5 h-5"></i>
+          {/* Right: Controls */}
+          <div className="space-y-6">
+            {/* Play Controls */}
+            <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-xl">
+              <div className="flex flex-col gap-4">
+                {!isPlaying || isPaused ? (
+                  <button 
+                    onClick={handlePlay}
+                    className="w-full py-4 bg-blue-500 hover:bg-blue-400 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-900"
+                  >
+                    <Play fill="currentColor" size={20} /> 開始朗讀
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handlePause}
+                    className="w-full py-4 bg-amber-500 hover:bg-amber-400 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <Pause fill="currentColor" size={20} /> 暫停
+                  </button>
+                )}
+                <button 
+                  onClick={handleStop}
+                  className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all"
+                >
+                  <Square fill="currentColor" size={18} /> 停止重置
                 </button>
-                <button onclick="toggleToc()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 active:bg-gray-200"><i data-lucide="list" class="w-5 h-5"></i></button>
-                <button onclick="toggleSettings()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 active:bg-gray-200"><i data-lucide="settings" class="w-5 h-5"></i></button>
-            </div>
-        </div>
-    </header>
-
-    <!-- TTS 面板 -->
-    <div id="tts-panel" class="hidden absolute top-16 right-4 left-4 sm:left-auto sm:w-80 z-50 p-4 rounded-xl shadow-2xl border bg-white border-gray-100 dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200 max-h-[70vh] overflow-y-auto flex flex-col">
-        <div class="flex justify-between items-center mb-4">
-            <h3 class="font-semibold flex items-center gap-2"><i data-lucide="mic" class="w-4 h-4"></i> 朗讀設定</h3>
-            <button onclick="toggleTTS()"><i data-lucide="x" class="w-4 h-4"></i></button>
-        </div>
-
-        <div class="space-y-4">
-            <div class="flex justify-center items-center gap-6 bg-gray-50 dark:bg-slate-900/50 p-4 rounded-xl">
-                <button onclick="stopTTS()" class="p-3 rounded-full bg-gray-200 active:bg-gray-300 dark:bg-slate-700 dark:active:bg-slate-600 transition">
-                    <i data-lucide="square" class="w-5 h-5 fill-current text-gray-600 dark:text-gray-200"></i>
-                </button>
-                <button id="tts-play-btn" onclick="playOrPauseTTS()" class="p-4 rounded-full bg-blue-600 active:bg-blue-700 text-white shadow-lg shadow-blue-500/30 transition-transform active:scale-95">
-                    <i data-lucide="play" class="w-8 h-8 fill-current pl-1"></i>
-                </button>
-            </div>
-            
-            <div class="text-center">
-                <p id="tts-status-msg" class="text-xs font-medium text-blue-600 dark:text-blue-300 min-h-[1.5em]">準備就緒</p>
-                <div id="debug-area" class="text-[10px] text-red-400 mt-2 hidden"></div>
+              </div>
             </div>
 
-            <div class="flex rounded-lg bg-gray-100 dark:bg-slate-700 p-1">
-                <button onclick="switchTTSMode('edge')" id="mode-edge-btn" class="tab-btn active text-blue-600 font-bold bg-white dark:bg-slate-600 shadow">Edge (免費)</button>
-                <button onclick="switchTTSMode('native')" id="mode-native-btn" class="tab-btn">內建</button>
-            </div>
-
-            <div id="settings-edge">
-                <div class="grid grid-cols-2 gap-2">
-                    <button onclick="selectEdgeVoice('zh-TW-HsiaoChenNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-blue-500 bg-blue-50 dark:bg-slate-600" data-voice="zh-TW-HsiaoChenNeural"><span class="font-bold block">曉臻 (女)</span></button>
-                    <button onclick="selectEdgeVoice('zh-TW-YunJheNeural')" class="edge-voice-btn p-2 text-xs border rounded active:bg-blue-100 text-center border-gray-200 dark:border-slate-600" data-voice="zh-TW-YunJheNeural"><span class="font-bold block">雲哲 (男)</span></button>
+            {/* Voice Settings */}
+            <div className="bg-white rounded-3xl p-6 border border-neutral-200 shadow-sm space-y-6">
+              <div className="flex items-center gap-2 font-bold text-slate-800">
+                <Settings size={18} /> 朗讀設定
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-neutral-400 uppercase mb-2 block">選擇音色</label>
+                  <select 
+                    className="w-full p-3 rounded-xl border border-neutral-200 bg-neutral-50 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    value={selectedVoiceName}
+                    onChange={(e) => setSelectedVoiceName(e.target.value)}
+                  >
+                    {voices.length === 0 && <option>正在加載語音...</option>}
+                    {/* 優先顯示台灣與 Microsoft Online 音色 */}
+                    <optgroup label="推薦音色 (Microsoft Online)">
+                      {voices.filter(v => v.name.includes('Online') && v.lang.includes('zh')).map(v => (
+                        <option key={v.name} value={v.name}>{v.name.replace('Microsoft ', '').replace(' Online (Natural)', '')}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="其他系統音色">
+                      {voices.filter(v => !v.name.includes('Online') && v.lang.includes('zh')).map(v => (
+                        <option key={v.name} value={v.name}>{v.name}</option>
+                      ))}
+                    </optgroup>
+                  </select>
                 </div>
-                <div class="mt-3">
-                    <label class="text-xs text-gray-500 mb-1 block">語速 <span id="edge-rate-val" class="ml-2 text-blue-500">0%</span></label>
-                    <input type="range" id="edge-rate" min="-50" max="50" step="10" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" oninput="document.getElementById('edge-rate-val').textContent = this.value + '%'">
+
+                <div>
+                  <div className="flex justify-between text-xs font-bold text-neutral-400 mb-2">
+                    <span>語速 ({rate}x)</span>
+                  </div>
+                  <input 
+                    type="range" min="0.5" max="2" step="0.1" 
+                    value={rate} 
+                    onChange={(e) => setRate(parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
                 </div>
+
+                <div>
+                  <div className="flex justify-between text-xs font-bold text-neutral-400 mb-2">
+                    <span>音調 ({pitch})</span>
+                  </div>
+                  <input 
+                    type="range" min="0.5" max="2" step="0.1" 
+                    value={pitch} 
+                    onChange={(e) => setPitch(parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+              </div>
             </div>
+
+            {/* Progress Info */}
+            {sentences.length > 0 && (
+              <div className="bg-blue-50 rounded-3xl p-6 border border-blue-100">
+                <div className="flex items-center gap-2 font-bold text-blue-900 mb-3 text-sm">
+                  <List size={16} /> 朗讀進度
+                </div>
+                <div className="text-2xl font-black text-blue-600 mb-1">
+                  {Math.round(((currentSentenceIndex + 1) / sentences.length) * 100)}%
+                </div>
+                <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-blue-600 h-full transition-all duration-500" 
+                    style={{ width: `${((currentSentenceIndex + 1) / sentences.length) * 100}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-blue-700 leading-tight">
+                  正在讀：{sentences[currentSentenceIndex]?.substring(0, 30)}...
+                </p>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Browser Notice */}
+        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6 flex gap-4">
+          <div className="bg-amber-100 p-2 rounded-lg text-amber-700 h-fit">
+            <Info size={20} />
+          </div>
+          <div className="text-sm text-amber-900 leading-relaxed">
+            <p className="font-bold mb-1">💡 如何獲得最佳體驗？</p>
+            <p>
+              請使用 <strong>Microsoft Edge 瀏覽器</strong> 開啟此頁面。Edge 內建了微軟最強大的「雲端神經網路語音」（如曉臻、雲哲），這些音色聽起來極為像真人。
+              如果您使用 Chrome 或 Safari，系統會調用作業系統預設的語音（如 macOS 的雅婷），效果可能稍有不同。
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
+  );
+};
 
-    <!-- 設定與目錄面板 -->
-    <div id="settings-panel" class="hidden absolute top-16 right-4 z-50 p-4 rounded-xl shadow-2xl border w-64 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-gray-200">
-        <h3 class="font-semibold mb-4">外觀設定</h3>
-        <div class="flex items-center justify-between mb-4">
-            <span>深色模式</span>
-            <button onclick="toggleTheme()" class="w-12 h-6 rounded-full bg-gray-300 dark:bg-blue-600 flex items-center p-1"><div class="w-4 h-4 rounded-full bg-white transform transition-transform dark:translate-x-6"></div></button>
-        </div>
-        <div>
-            <span class="mb-2 block">字體大小</span>
-            <div class="flex gap-2"><button onclick="changeFontSize(-10)" class="flex-1 bg-gray-100 py-1 rounded">-</button><span id="font-size-display" class="flex-1 text-center py-1">100%</span><button onclick="changeFontSize(10)" class="flex-1 bg-gray-100 py-1 rounded">+</button></div>
-        </div>
-    </div>
-
-    <div id="toc-overlay" class="hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onclick="toggleToc()"></div>
-    <div id="toc-panel" class="fixed top-0 left-0 bottom-0 w-80 max-w-[85%] z-50 bg-white dark:bg-slate-800 shadow-2xl transform -translate-x-full transition-transform duration-300 flex flex-col">
-        <div class="p-4 border-b flex justify-between items-center dark:text-white dark:border-slate-700"><h2>目錄</h2><button onclick="toggleToc()"><i data-lucide="x" class="w-5 h-5"></i></button></div>
-        <div class="flex-1 overflow-y-auto p-2" id="toc-list"></div>
-    </div>
-
-    <!-- 閱讀區 -->
-    <main class="flex-1 relative flex flex-col justify-center items-center bg-gray-50 dark:bg-slate-900 overflow-hidden w-full">
-        <div id="welcome-screen" class="text-center p-8 max-w-md animate-fade-in px-4">
-            <div class="bg-blue-100 dark:bg-blue-900/30 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <i data-lucide="book" class="w-10 h-10 text-blue-500"></i>
-            </div>
-            <h2 class="text-xl font-bold mb-3 dark:text-white">EPUB 閱讀器</h2>
-            <p class="text-sm text-gray-500">請等待上方燈號變為 <span class="text-green-500 font-bold">綠色</span></p>
-            <div id="error-msg" class="text-red-500 text-xs mt-4 hidden"></div>
-        </div>
-        <div id="loading-spinner" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm">
-            <div class="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-        </div>
-        <div id="viewer" class="hidden w-full h-full bg-white dark:bg-slate-900 shadow-xl"></div>
-    </main>
-
-    <footer id="footer-nav" class="hidden h-14 flex items-center justify-between px-4 border-t bg-white dark:bg-slate-800 dark:border-slate-700 pb-safe-bottom">
-        <button onclick="prevPage()" class="p-4"><i data-lucide="chevron-left"></i></button>
-        <div class="text-xs text-gray-400">點擊翻頁</div>
-        <button onclick="nextPage()" class="p-4"><i data-lucide="chevron-right"></i></button>
-    </footer>
-
-    <audio id="audio-player" playsinline></audio>
-
-    <script>
-        lucide.createIcons();
-        
-        let book = null, rendition = null;
-        let ttsMode = 'edge', edgeVoice = 'zh-TW-HsiaoChenNeural';
-        let isPlaying = false, audioQueue = [], textQueue = [], isFetching = false;
-        const audioPlayer = document.getElementById('audio-player');
-        const silentWav = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-
-        // 強制檢查依賴是否載入
-        window.onload = () => {
-            const checkDeps = setInterval(() => {
-                const hasZip = typeof window.JSZip !== 'undefined';
-                const hasEpub = typeof window.ePub !== 'undefined';
-                
-                if (hasZip && hasEpub) {
-                    clearInterval(checkDeps);
-                    updateStatus('引擎就緒', 'success');
-                    document.getElementById('upload-btn-label').classList.remove('opacity-50', 'pointer-events-none');
-                    document.getElementById('file-input').disabled = false;
-                } else {
-                    // 如果 5 秒還沒好，顯示錯誤
-                    setTimeout(() => {
-                        if(typeof window.JSZip === 'undefined') showError('JSZip 載入失敗，請檢查網路');
-                        if(typeof window.ePub === 'undefined') showError('ePub 引擎載入失敗，請檢查網路');
-                    }, 5000);
-                }
-            }, 500);
-        };
-
-        const fileInput = document.getElementById('file-input');
-        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-
-        function handleFile(file) {
-            if (!file) return;
-            document.getElementById('loading-spinner').classList.remove('hidden');
-            document.getElementById('welcome-screen').classList.add('hidden');
-            document.getElementById('book-title').textContent = file.name.replace('.epub','');
-
-            if (book) { book.destroy(); document.getElementById('viewer').innerHTML = ''; stopTTS(); }
-            
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    if (!window.JSZip) throw new Error("JSZip 未載入");
-                    book = ePub(e.target.result);
-                    rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated", manager: "default" });
-                    
-                    rendition.display().then(() => {
-                        document.getElementById('loading-spinner').classList.add('hidden');
-                        document.getElementById('viewer').classList.remove('hidden');
-                        document.getElementById('controls').classList.remove('hidden');
-                        document.getElementById('footer-nav').classList.remove('hidden');
-                        document.getElementById('upload-btn-label').classList.add('hidden');
-                        book.loaded.navigation.then(nav => renderToc(nav.toc));
-                    }).catch(err => {
-                        showError('書籍渲染錯誤: ' + err.message);
-                        document.getElementById('loading-spinner').classList.add('hidden');
-                    });
-                    
-                    // 觸控翻頁
-                    let ts = 0;
-                    document.getElementById('viewer').addEventListener('touchstart', e => ts = e.changedTouches[0].screenX, {passive: true});
-                    document.getElementById('viewer').addEventListener('touchend', e => {
-                        let te = e.changedTouches[0].screenX;
-                        if (te < ts - 50) nextPage();
-                        if (te > ts + 50) prevPage();
-                    }, {passive: true});
-                } catch(err) {
-                    showError('解析失敗: ' + err.message);
-                    document.getElementById('loading-spinner').classList.add('hidden');
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        function toggleTTS() {
-            document.getElementById('tts-panel').classList.toggle('hidden');
-            document.getElementById('settings-panel').classList.add('hidden');
-            document.getElementById('toc-panel').classList.add('-translate-x-full');
-            document.getElementById('toc-overlay').classList.add('hidden');
-        }
-
-        function playOrPauseTTS() {
-            if (isPlaying) {
-                stopTTS(); 
-            } else {
-                // iOS Audio Unlock Hack
-                audioPlayer.src = silentWav;
-                audioPlayer.play().then(() => {
-                    startEdgeRead();
-                }).catch(e => {
-                    document.getElementById('debug-area').textContent = "音訊喚醒失敗: " + e.message;
-                    document.getElementById('debug-area').classList.remove('hidden');
-                    startEdgeRead(); // 還是嘗試執行
-                });
-            }
-        }
-
-        function stopTTS() {
-            isPlaying = false;
-            isFetching = false;
-            audioQueue = [];
-            textQueue = [];
-            audioPlayer.pause();
-            updateTTSUI(false);
-            if(window.currentWs) { window.currentWs.close(); window.currentWs = null; }
-            document.getElementById('tts-status-msg').textContent = '已停止';
-        }
-
-        function startEdgeRead() {
-            const currentContents = rendition.getContents();
-            if (!currentContents || currentContents.length === 0) return;
-            
-            let text = currentContents[0].document.body.innerText;
-            text = text.replace(/\s+/g, ' ').trim();
-            if (!text) { document.getElementById('tts-status-msg').textContent = '本頁無文字'; return; }
-
-            const rawSentences = text.match(/[^。！？；]+[。！？；]?/g) || [text];
-            textQueue = rawSentences.filter(s => s.trim().length > 0);
-            
-            isPlaying = true;
-            updateTTSUI(true);
-            document.getElementById('tts-status-msg').textContent = '連線中...';
-            fetchNextChunk();
-        }
-
-        async function fetchNextChunk() {
-            if (!isPlaying) return;
-            if (textQueue.length === 0) {
-                if (audioQueue.length === 0) { stopTTS(); document.getElementById('tts-status-msg').textContent = '本頁結束'; }
-                return;
-            }
-            if (audioQueue.length > 2) { setTimeout(fetchNextChunk, 1000); return; }
-
-            const sentence = textQueue.shift();
-            isFetching = true;
-
-            try {
-                const blob = await fetchEdgeTTS(sentence);
-                if (blob) {
-                    const url = URL.createObjectURL(blob);
-                    audioQueue.push(url);
-                    if (audioPlayer.paused || audioPlayer.ended || audioPlayer.src === silentWav) playNextAudio();
-                }
-            } catch (e) {
-                console.error(e);
-            } finally {
-                isFetching = false;
-                fetchNextChunk();
-            }
-        }
-
-        function playNextAudio() {
-            if (!isPlaying || audioQueue.length === 0) return;
-            const url = audioQueue.shift();
-            
-            audioPlayer.src = url;
-            audioPlayer.play().then(() => {
-                document.getElementById('tts-status-msg').textContent = '朗讀中...';
-                if ('mediaSession' in navigator) {
-                    navigator.mediaSession.metadata = new MediaMetadata({ title: document.getElementById('book-title').textContent, artist: "Edge TTS" });
-                    navigator.mediaSession.setActionHandler('play', () => { isPlaying=true; audioPlayer.play(); });
-                    navigator.mediaSession.setActionHandler('pause', () => { isPlaying=false; audioPlayer.pause(); });
-                }
-            }).catch(e => { playNextAudio(); });
-
-            audioPlayer.onended = () => { URL.revokeObjectURL(url); playNextAudio(); };
-        }
-
-        function fetchEdgeTTS(text) {
-            return new Promise((resolve, reject) => {
-                const requestId = crypto.randomUUID().replace(/-/g, '');
-                const ws = new WebSocket("wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4");
-                window.currentWs = ws;
-                let audioParts = [];
-                let completed = false;
-                const timer = setTimeout(() => { if(!completed) { ws.close(); reject(new Error("Timeout")); } }, 10000);
-
-                ws.onopen = () => {
-                    const conf = `X-Timestamp:${new Date().toString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n`;
-                    ws.send(conf);
-                    const rateStr = document.getElementById('edge-rate').value + '%';
-                    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'><voice name='${edgeVoice}'><prosody rate='${rateStr}'>${text}</prosody></voice></speak>`;
-                    const msg = `X-Timestamp:${new Date().toString()}\r\nX-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
-                    ws.send(msg);
-                };
-
-                ws.onmessage = async (event) => {
-                    if (event.data instanceof Blob) {
-                        const arrayBuffer = await event.data.arrayBuffer();
-                        const view = new Uint8Array(arrayBuffer);
-                        let headerEnd = -1;
-                        for (let i = 0; i < Math.min(view.length, 200) - 3; i++) {
-                            if (view[i]===13 && view[i+1]===10 && view[i+2]===13 && view[i+3]===10) { headerEnd = i + 4; break; }
-                        }
-                        if (headerEnd !== -1) audioParts.push(view.slice(headerEnd));
-                    } else if (typeof event.data === 'string' && event.data.includes('Path:turn.end')) {
-                        completed = true; clearTimeout(timer); ws.close();
-                        resolve(new Blob(audioParts, { type: 'audio/mp3' }));
-                    }
-                };
-                ws.onerror = (e) => { clearTimeout(timer); reject(new Error("WS Error")); };
-                ws.onclose = () => { if (!completed) reject(new Error("Closed unexpectedly")); };
-            });
-        }
-
-        // UI Helpers
-        function updateStatus(msg, type) { 
-            document.getElementById('engine-status-text').textContent = msg; 
-            const dot = document.getElementById('engine-status-dot');
-            dot.className = `w-2 h-2 rounded-full ${type==='success'?'bg-green-500 status-dot-ready':'bg-red-500'}`;
-        }
-        function showError(msg) {
-            const el = document.getElementById('error-msg');
-            el.textContent = msg; el.classList.remove('hidden');
-            updateStatus('載入錯誤', 'error');
-        }
-        function updateTTSUI(isPlay) {
-            const btn = document.getElementById('tts-play-btn');
-            const icon = btn.querySelector('i');
-            if (isPlay) {
-                icon.setAttribute('data-lucide', 'pause');
-                btn.classList.add('bg-red-500'); btn.classList.remove('bg-blue-600');
-            } else {
-                icon.setAttribute('data-lucide', 'play');
-                btn.classList.remove('bg-red-500'); btn.classList.add('bg-blue-600');
-            }
-            lucide.createIcons();
-        }
-
-        function selectEdgeVoice(voice) { edgeVoice = voice; updateVoiceBtnStyle(voice); }
-        function updateVoiceBtnStyle(voice) {
-            document.querySelectorAll('.edge-voice-btn').forEach(btn => {
-                if(btn.dataset.voice === voice) {
-                    btn.classList.add('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600'); btn.classList.remove('border-gray-200');
-                } else {
-                    btn.classList.remove('border-blue-500', 'bg-blue-50', 'dark:bg-slate-600'); btn.classList.add('border-gray-200');
-                }
-            });
-        }
-        function switchTTSMode(mode) {
-            // 簡化模式切換，目前只支援 Edge 與 Native
-        }
-
-        function prevPage() { rendition && rendition.prev(); }
-        function nextPage() { rendition && rendition.next(); }
-        function toggleToc() { 
-            const panel = document.getElementById('toc-panel');
-            const overlay = document.getElementById('toc-overlay');
-            if(panel.classList.contains('-translate-x-full')) {
-                panel.classList.remove('-translate-x-full'); overlay.classList.remove('hidden');
-            } else {
-                panel.classList.add('-translate-x-full'); overlay.classList.add('hidden');
-            }
-        }
-        function renderToc(toc) {
-            const list = document.getElementById('toc-list');
-            list.innerHTML = '';
-            toc.forEach(ch => {
-                const btn = document.createElement('button');
-                btn.textContent = ch.label;
-                btn.className = "w-full text-left p-3 border-b border-gray-100 dark:border-slate-700 text-sm active:bg-blue-50 dark:active:bg-slate-700";
-                btn.onclick = () => { rendition.display(ch.href); toggleToc(); };
-                list.appendChild(btn);
-            });
-        }
-        function toggleSettings() { document.getElementById('settings-panel').classList.toggle('hidden'); }
-        function changeFontSize(d) { 
-            const currentSize = parseInt(document.getElementById('font-size-display').textContent);
-            const newSize = Math.max(50, Math.min(200, currentSize + d));
-            rendition.themes.fontSize(`${newSize}%`); 
-            document.getElementById('font-size-display').textContent=`${newSize}%`; 
-        }
-        function toggleTheme() { 
-            document.documentElement.classList.toggle('dark');
-            const isDark = document.documentElement.classList.contains('dark');
-            rendition.themes.register(isDark?'dark':'light', isDark ? { body: { color: '#cbd5e1', background: '#0f172a' } } : { body: { color: '#000000', background: '#ffffff' } });
-            rendition.themes.select(isDark?'dark':'light');
-        }
-    </script>
-</body>
-</html>
+export default App;
